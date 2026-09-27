@@ -94,22 +94,47 @@ def portfolio_risk(results, weights):
 
 
 def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest scores", finalists=12, demo=False, progress=None, sector_hints=None, positive_only=True, horizon=63):
+    """
+    Build a portfolio from final research scores.
+
+    `finalists` is treated as a minimum initial deep-analysis pool, not a hard
+    ceiling. The builder automatically analyzes additional screened candidates
+    until it has `count` eligible holdings or the screened universe is exhausted.
+    """
     if progress:
         progress(.02, "Loading price histories")
-    if horizon not in (21,63,126,252):
+    if horizon not in (21, 63, 126, 252):
         raise ValueError("Choose a 1m, 3m, 6m, or 1y horizon.")
+
     symbols = list(dict.fromkeys(symbols))
+    if not symbols:
+        raise ValueError("No symbols were provided.")
+
+    count = max(1, int(count))
+    finalists = max(1, int(finalists))
     errors, frames, screened = {}, {}, []
-    keep = max(count, finalists)
-    # Screen bounded chunks; retain only finalist histories to limit memory.
+
+    # Start with a real over-sampled analysis pool. For example, asking for
+    # 20 holdings starts by deeply analyzing at least 60 candidates. We keep
+    # only those leading price frames in memory; lower-ranked names can be
+    # fetched again later if replacements are needed.
+    initial_analysis_target = min(
+        len(symbols),
+        max(finalists, count * 3, 30),
+    )
+    keep = initial_analysis_target
+
+    # Stage 1: technical screen across the requested universe.
     for offset in range(0, len(symbols), 64):
-        chunk = symbols[offset:offset+64]
+        chunk = symbols[offset:offset + 64]
         current, failed = data.batch_prices(chunk, demo)
         errors.update(failed)
+
         if not current:
-            for symbol in symbols[offset+64:]:
+            for symbol in symbols[offset + 64:]:
                 errors[symbol] = "Not requested after provider batch failure; scan incomplete"
             break
+
         for symbol, frame in current.items():
             technical = technical_analysis_from_data(frame)
             if technical:
@@ -117,69 +142,226 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
                 frames[symbol] = frame
             else:
                 errors[symbol] = "Fewer than 63 valid daily prices"
+
         screened.sort(key=lambda row: (-row[1], row[0]))
         retained = {symbol for symbol, _ in screened[:keep]}
         frames = {symbol: frame for symbol, frame in frames.items() if symbol in retained}
+
         if progress:
-            progress(.05+.25*min(offset+len(chunk),len(symbols))/max(len(symbols),1), f"Price screen · {min(offset+len(chunk),len(symbols))}/{len(symbols)} listings")
-    shortlist = [s for s, _ in screened[:keep]]
+            progress(
+                .05 + .25 * min(offset + len(chunk), len(symbols)) / max(len(symbols), 1),
+                f"Price screen · {min(offset + len(chunk), len(symbols))}/{len(symbols)} listings",
+            )
+
+    if not screened:
+        raise ValueError("No stocks had enough usable price history to screen.")
+
+    screened.sort(key=lambda row: (-row[1], row[0]))
+    analysis_order = [symbol for symbol, _ in screened]
+    initial_analysis_target = min(initial_analysis_target, len(analysis_order))
+
     results = []
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        jobs = {pool.submit(analyze, s, demo, frames[s], horizon=horizon): s for s in shortlist}
-        for index, job in enumerate(as_completed(jobs), 1):
-            symbol = jobs[job]
-            try:
-                result = job.result()
-                sector, source = data.resolve_sector(symbol, result["company"].get("sector"), (sector_hints or {}).get(symbol))
-                result["company"].update(sector=sector, sector_source=source)
-                if result["company"].get("currency") != "USD":
-                    errors[symbol] = "USD quote currency could not be verified"
+    analyzed_symbols = set()
+    next_index = 0
+    attempted = 0
+    eligible = []
+
+    def ensure_frames(batch_symbols):
+        """Fetch any candidate histories that were dropped after the screen."""
+        missing = [symbol for symbol in batch_symbols if symbol not in frames]
+        for offset in range(0, len(missing), 64):
+            chunk = missing[offset:offset + 64]
+            current, failed = data.batch_prices(chunk, demo)
+            errors.update(failed)
+            for symbol, frame in current.items():
+                technical = technical_analysis_from_data(frame)
+                if technical:
+                    frames[symbol] = frame
                 else:
-                    results.append(result)
-            except Exception as exc:
-                errors[symbol] = str(exc)
-            if progress:
-                progress(.30 + .65*index/max(len(shortlist),1), f"Company + ML analysis · {index}/{len(shortlist)}")
+                    errors[symbol] = "Fewer than 63 valid daily prices on refill"
+            for symbol in chunk:
+                if symbol not in current and symbol not in errors:
+                    errors[symbol] = "Price history unavailable during finalist refill"
+
+    def analyze_batch(batch_symbols):
+        nonlocal attempted
+        batch_symbols = [
+            symbol for symbol in batch_symbols
+            if symbol not in analyzed_symbols
+        ]
+        if not batch_symbols:
+            return
+
+        ensure_frames(batch_symbols)
+        ready = [symbol for symbol in batch_symbols if symbol in frames]
+        analyzed_symbols.update(batch_symbols)
+        attempted += len(batch_symbols)
+
+        if not ready:
+            return
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            jobs = {
+                pool.submit(analyze, symbol, demo, frames[symbol], horizon=horizon): symbol
+                for symbol in ready
+            }
+            for job_index, job in enumerate(as_completed(jobs), 1):
+                symbol = jobs[job]
+                try:
+                    result = job.result()
+                    sector, source = data.resolve_sector(
+                        symbol,
+                        result["company"].get("sector"),
+                        (sector_hints or {}).get(symbol),
+                    )
+                    result["company"].update(sector=sector, sector_source=source)
+                    if result["company"].get("currency") != "USD":
+                        errors[symbol] = "USD quote currency could not be verified"
+                    else:
+                        results.append(result)
+                except Exception as exc:
+                    errors[symbol] = str(exc)
+
+                if progress:
+                    if next_index <= initial_analysis_target:
+                        fraction = .30 + .60 * min(
+                            len(analyzed_symbols) / max(initial_analysis_target, 1),
+                            1.0,
+                        )
+                    else:
+                        fraction = .92
+                    current_eligible = sum(
+                        recommendation_exclusion(r, positive_only) is None
+                        for r in results
+                    )
+                    progress(
+                        fraction,
+                        f"Company + ML analysis · {len(analyzed_symbols)} analyzed · {current_eligible}/{count} eligible",
+                    )
+
+    # Stage 2: analyze an over-sampled initial pool, then automatically refill
+    # from the next-best technical candidates until enough holdings qualify.
+    while next_index < len(analysis_order):
+        if next_index == 0:
+            batch_size = initial_analysis_target
+        else:
+            # Refill in reasonably sized batches so a few exclusions do not
+            # cause dozens of tiny provider/model calls.
+            batch_size = max(10, count)
+
+        batch = analysis_order[next_index:next_index + batch_size]
+        next_index += len(batch)
+        analyze_batch(batch)
+
+        ranked_so_far = sorted(results, key=lambda r: (-r["score"], r["symbol"]))
+        eligible = [
+            r for r in ranked_so_far
+            if recommendation_exclusion(r, positive_only) is None
+        ]
+
+        if len(eligible) >= count:
+            break
+
+        if progress and next_index < len(analysis_order):
+            progress(
+                .92,
+                f"Only {len(eligible)}/{count} eligible so far · analyzing more candidates",
+            )
+
     if not results:
         raise ValueError("No eligible USD-priced stocks could be analyzed. Check the provider or try demo mode.")
+
     ranked = sorted(results, key=lambda r: (-r["score"], r["symbol"]))
     for r in ranked:
         reason = recommendation_exclusion(r, positive_only)
         if reason:
             errors[r["symbol"]] = reason
-    eligible = [r for r in ranked if not recommendation_exclusion(r, positive_only)]
+
+    eligible = [r for r in ranked if recommendation_exclusion(r, positive_only) is None]
     if not eligible:
-        raise ValueError("No analyzed candidates meet the known-sector, complete-data, and positive-return requirements. No portfolio was built. Increase Full company + ML analyses or try a broader universe.")
+        raise ValueError(
+            "No analyzed candidates meet the known-sector, complete-data, and positive-return requirements. "
+            "The builder exhausted the available screened candidates. Try a broader universe or another horizon."
+        )
+
     chosen = choose_holdings(eligible, count, method)
     settings = PROFILES[profile]
-    raw = [(max(r["score"], 10)/100) / max(r["technical"]["annualized_volatility"], .10)**settings["power"] for r in chosen]
+    raw = [
+        (max(r["score"], 10) / 100)
+        / max(r["technical"]["annualized_volatility"], .10) ** settings["power"]
+        for r in chosen
+    ]
     weights, effective_cap = capped_weights(raw, settings["cap"])
+
     rows = []
     for r, w in zip(chosen, weights):
-        allocation, price = budget*w, r["technical"]["price"]
+        allocation, price = budget * w, r["technical"]["price"]
         model = r.get("forecast") or {}
-        rows.append({"Ticker": r["symbol"], "Company": r["company"]["company_name"], "Sector": r["company"].get("sector", "Unknown"),
-                     "Weight": float(w), "Score": r["score"], "Signal": r["signal"], "Price": price,
-                     "Target allocation": float(allocation), "Whole shares": int(allocation//price),
-                     "ML forecast": model.get("predicted_return"), "Forecast method": model.get("forecast_kind", "Unavailable"), "Forecast note": model.get("reason", "Ensemble estimate"), "Sector source": r["company"].get("sector_source", "Company provider"), "ML score weight": sum(v["weight"] for k,v in r["components"].items() if k.startswith("ML ·")), "Price date": r["as_of"]})
+        rows.append({
+            "Ticker": r["symbol"],
+            "Company": r["company"]["company_name"],
+            "Sector": r["company"].get("sector", "Unknown"),
+            "Weight": float(w),
+            "Score": r["score"],
+            "Signal": r["signal"],
+            "Price": price,
+            "Target allocation": float(allocation),
+            "Whole shares": int(allocation // price),
+            "ML forecast": model.get("predicted_return"),
+            "Forecast method": model.get("forecast_kind", "Unavailable"),
+            "Forecast note": model.get("reason", "Ensemble estimate"),
+            "Sector source": r["company"].get("sector_source", "Company provider"),
+            "ML score weight": sum(v["weight"] for k, v in r["components"].items() if k.startswith("ML ·")),
+            "Price date": r["as_of"],
+        })
+
     table = pd.DataFrame(rows)
     chosen_symbols = {r["symbol"] for r in chosen}
-    ranking = pd.DataFrame([{"Rank": i, "Ticker": r["symbol"], "Final score": r["score"],
-                             "Technical": r["technical"]["technical_score"], "Company": r["fundamental_score"],
-                             "Forecast return (%)": 100*(r.get("forecast") or {}).get("predicted_return", float("nan")),
-                             "Eligibility": recommendation_exclusion(r, positive_only) or "Eligible",
-                             "ML score weight": sum(v["weight"] for k,v in r["components"].items() if k.startswith("ML ·")),
-                             "Selected": r["symbol"] in chosen_symbols} for i, r in enumerate(ranked, 1)])
+    ranking = pd.DataFrame([
+        {
+            "Rank": i,
+            "Ticker": r["symbol"],
+            "Final score": r["score"],
+            "Technical": r["technical"]["technical_score"],
+            "Company": r["fundamental_score"],
+            "Forecast return (%)": 100 * (r.get("forecast") or {}).get("predicted_return", float("nan")),
+            "Eligibility": recommendation_exclusion(r, positive_only) or "Eligible",
+            "ML score weight": sum(v["weight"] for k, v in r["components"].items() if k.startswith("ML ·")),
+            "Selected": r["symbol"] in chosen_symbols,
+        }
+        for i, r in enumerate(ranked, 1)
+    ])
+
     spent = float((table["Whole shares"] * table.Price).sum())
     risk = portfolio_risk(chosen, weights)
     if progress:
         progress(1., "Portfolio ready")
-    return {"table": table, "ranking": ranking, "results": chosen, "score": float(np.dot(weights, [r["score"] for r in chosen])),
-            "risk": risk, "errors": errors, "budget": budget, "cash": max(0, budget-spent), "profile": profile,
-            "horizon": horizon, "universe_count": len(symbols), "method": method, "positive_only": positive_only, "positive_candidates": len(eligible), "requested": count, "screened": len(screened), "analyzed": len(results),
-            "effective_cap": effective_cap, "nominal_cap": settings["cap"], "demo": demo,
-            "created_at": pd.Timestamp.now(tz="UTC").isoformat()}
 
+    return {
+        "table": table,
+        "ranking": ranking,
+        "results": chosen,
+        "score": float(np.dot(weights, [r["score"] for r in chosen])),
+        "risk": risk,
+        "errors": errors,
+        "budget": budget,
+        "cash": max(0, budget - spent),
+        "profile": profile,
+        "horizon": horizon,
+        "universe_count": len(symbols),
+        "method": method,
+        "positive_only": positive_only,
+        "positive_candidates": len(eligible),
+        "requested": count,
+        "screened": len(screened),
+        "analyzed": len(results),
+        "analysis_attempted": attempted,
+        "analysis_exhausted": next_index >= len(analysis_order) and len(eligible) < count,
+        "effective_cap": effective_cap,
+        "nominal_cap": settings["cap"],
+        "demo": demo,
+        "created_at": pd.Timestamp.now(tz="UTC").isoformat(),
+    }
 
 def review(holdings, demo=False, progress=None):
     results, errors = [], {}
