@@ -76,15 +76,30 @@ st.caption(f"Forecast horizon: {result.get('horizon',63)} trading sessions. Univ
 st.caption(f"Built {result['created_at'][:16].replace('T',' ')} UTC · {result['universe_name']} · {result['sector_filter']} · {result['profile']} · ${result['budget']:,.0f} budget. Submit Build portfolio to apply changed settings.")
 if len(table)<result["requested"]:
     st.warning(f"Only {len(table)} of {result['requested']} requested holdings met the positive-return and data requirements. Review exclusions below.")
+
+st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
+
 cols = st.columns(4)
 with cols[0]:ui.metric("WEIGHTED RESEARCH SCORE",f"{result['score']:.0f} / 100","Weighted by target allocation")
 with cols[1]:ui.metric("HOLDINGS",str(len(table)),f"{result['analyzed']} candidates fully analyzed")
 with cols[2]:ui.metric("EST. ANNUAL VOLATILITY",ui.fmt((result["risk"] or {}).get("volatility"),"ratio"),"Shrunk historical covariance")
 with cols[3]:ui.metric("UNALLOCATED CASH",ui.fmt(result["cash"],"money"),"After rounding to whole shares")
+
+st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
+
 ui.forecast_summary(table, result["budget"], result.get("horizon",63))
+
+st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
+
 ui.holdings_table(table, result.get("horizon",63))
+
+st.markdown('<div class="builder-vspace-sm"></div>', unsafe_allow_html=True)
+
 ui.data_notes(result["results"])
 st.caption("Weights and risk estimates describe fractional target allocations. Whole-share execution can produce different weights; the remaining budget stays as cash.")
+
+st.markdown('<div class="builder-vspace-lg"></div>', unsafe_allow_html=True)
+
 left,right = st.columns([1,1])
 with left:
     ui.section("01","Position weights")
@@ -92,12 +107,21 @@ with left:
 with right:
     ui.section("02","Sector exposure")
     ui.allocation_chart(table,"Sector")
+
+st.markdown('<div class="builder-vspace-lg"></div>', unsafe_allow_html=True)
+
 ui.download_table(table,"buyntiq_portfolio.csv","download_builder")
+
+st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
+
 with st.expander("Final candidate ranking",expanded=True):
     ranking = result["ranking"].copy()
     ranking["ML score weight"] *= 100
     st.dataframe(ranking.round(2),width="stretch",hide_index=True)
     st.caption(f"{result['screened']} symbols received a technical screen; {result['analyzed']} finalists completed company + ML analysis. Highest scores means best within those analyzed finalists, not the whole market.")
+
+st.markdown('<div class="builder-vspace-sm"></div>', unsafe_allow_html=True)
+
 with st.expander("How the allocation was made"):
     st.write("1. Screen valid price histories by the existing technical score.")
     st.write("2. Compute the same company + ML research score used on Stock Research for each finalist.")
