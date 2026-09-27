@@ -99,3 +99,34 @@ button[kind="primary"]:hover,button[kind="primaryFormSubmit"]:hover { background
 @media(max-width:700px) { .block-container { padding:1rem 1.15rem 3rem; } .home-hero { padding:2rem 0; } .hero-meta { flex-wrap:wrap; gap:12px; } .page-heading h1 { font-size:2.5rem!important; } .metric-card { min-height:110px; } .feature-description { min-height:unset; } .section-heading small { display:none; } }
 @media(max-width:700px) { .st-key-navigation [data-testid="stHorizontalBlock"] { flex-wrap:wrap!important; gap:2px!important; } .st-key-navigation [data-testid="stColumn"] { flex:1 1 45%!important; min-width:45%!important; width:45%!important; } }
 @media(prefers-reduced-motion:reduce) { * { transition:none!important; scroll-behavior:auto!important; } }
+/* Readable news links */
+[data-testid="stLinkButton"] a {
+  background: #171717 !important;
+  color: #f5f5f5 !important;
+  border: 1px solid #404040 !important;
+  border-radius: 9px !important;
+  padding: 14px 18px !important;
+  min-height: 52px;
+  height: auto !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  white-space: normal !important;
+}
+
+[data-testid="stLinkButton"] a p {
+  color: #f5f5f5 !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+  overflow-wrap: anywhere;
+}
+
+[data-testid="stLinkButton"] a:hover {
+  background: #252525 !important;
+  border-color: #858585 !important;
+}
+
+[data-testid="stLinkButton"] a:focus-visible {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 3px;
+}
