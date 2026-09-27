@@ -12,7 +12,7 @@ import pandas as pd
 from buyntiq import cache
 from buyntiq.features import dataset, feature_frame
 
-VERSION = "buyntiq-ensemble-4.0.1"
+VERSION = "buyntiq-ensemble-5.0.0"
 _training_lock = threading.RLock()
 HORIZONS = {"1 month": 21, "3 months": 63, "6 months": 126, "1 year": 252}
 
@@ -76,117 +76,143 @@ def forecast(prices, horizon=63):
         return dict(result, cache_hit=False)
 
 
+def _choose_blend(actual, model_pred, baseline_pred, fold_sizes):
+    """Development-only choice; baseline wins near ties and unstable gains."""
+    actual, model_pred, baseline_pred = map(np.asarray, (actual, model_pred, baseline_pred))
+    base_loss = _metric(actual, baseline_pred)
+    if base_loss <= 1e-9:
+        return 0.0
+    candidates = []
+    cuts = np.cumsum([0] + list(fold_sizes))
+    for alpha in (0., .25, .5, .75, 1.):
+        pred = alpha*model_pred + (1-alpha)*baseline_pred
+        loss = _metric(actual, pred)
+        wins = sum(_metric(actual[a:b], pred[a:b]) < _metric(actual[a:b], baseline_pred[a:b]) for a,b in zip(cuts[:-1],cuts[1:]))
+        if alpha == 0 or (loss < .97*base_loss and wins >= 2):
+            candidates.append((alpha,loss))
+    best = min(loss for _,loss in candidates)
+    return min(alpha for alpha,loss in candidates if loss <= best*1.02+1e-12)
+
+
+def _walk_predictions(x, y, scale, positions, tests, horizon, weights, baseline_name):
+    """Expanding training with quarterly-or-horizon refits and matured labels."""
+    predictions, baselines, bounds = [], [], []
+    step = max(63, horizon)
+    for offset in range(0,len(tests),step):
+        block = tests[offset:offset+step]
+        train = np.flatnonzero(positions.to_numpy()+horizon < positions.iloc[block[0]])
+        assert len(train) and positions.iloc[train[-1]]+horizon < positions.iloc[block[0]]
+        pred = np.zeros(len(block))
+        for name, model in _models().items():
+            if weights[name] > 0:
+                pred += weights[name]*_fit_predict(model,x,y,scale,train,block)
+        base = 0. if baseline_name == "No price change" else float(y.iloc[train].tail(252).median())
+        predictions.extend(pred)
+        baselines.extend(np.repeat(base,len(block)))
+        bounds.append({"train_last":str(x.index[train[-1]].date()),"test_first":str(x.index[block[0]].date()),"test_last":str(x.index[block[-1]].date()),"gap_sessions":horizon})
+    return np.asarray(predictions), np.asarray(baselines), bounds
+
+
 def _train(prices, horizon):
     from sklearn.model_selection import TimeSeriesSplit
     from threadpoolctl import threadpool_limits
     start = time.perf_counter()
-    x, y, scale, positions = dataset(prices, horizon)
+    if horizon not in HORIZONS.values():
+        raise ValueError("Supported horizons are 21, 63, 126, and 252 sessions.")
+    x,y,scale,positions = dataset(prices,horizon)
     try:
-        parts = temporal_partitions(len(x), horizon)
+        parts = temporal_partitions(len(x),horizon)
     except ValueError as exc:
-        return {"available": False, "reason": str(exc), "model_version": VERSION}
+        return {"available":False,"reason":str(exc),"model_version":VERSION}
     if x.empty or not np.isfinite(x.to_numpy()).all():
-        return {"available": False, "reason": "Price history has missing or invalid model inputs.", "model_version": VERSION}
+        return {"available":False,"reason":"Invalid historical features.","model_version":VERSION}
+    current = feature_frame(prices).iloc[[-1]]
+    if not np.isfinite(current.to_numpy()).all():
+        return {"available":False,"reason":"Latest session has incomplete features.","model_version":VERSION}
     names = list(_models())
-    oof = {name: [] for name in names}
-    actual, zero, drift = [], [], []
-    fold_bounds = []
-    splitter = TimeSeriesSplit(n_splits=3, test_size=84, gap=horizon)
-    # One native thread avoids CPU oversubscription during portfolio analysis.
+    oof = {name:[] for name in names}
+    actual,zero,drift,fold_bounds,fold_sizes = [],[],[],[],[]
+    # Longer development blocks increase the number of distinct forecast outcomes.
+    test_size = min(max(84,horizon), (len(parts['dev'])-horizon-200)//3)
+    splitter = TimeSeriesSplit(n_splits=3,test_size=test_size,gap=horizon)
     with threadpool_limits(limits=1):
-        for train, test in splitter.split(x.iloc[parts["dev"]]):
-            # Every training label ends strictly before the test feature date.
-            assert positions.iloc[train[-1]] + horizon < positions.iloc[test[0]]
-            for name, model in _models().items():
-                oof[name].extend(_fit_predict(model, x, y, scale, train, test))
-            actual.extend(y.iloc[test])
-            zero.extend(np.zeros(len(test)))
-            drift.extend(np.repeat(float(y.iloc[train].tail(252).median()), len(test)))
-            fold_bounds.append({"train_last": str(x.index[train[-1]].date()), "test_first": str(x.index[test[0]].date()), "test_last": str(x.index[test[-1]].date()), "gap_sessions": horizon})
+        for train,test in splitter.split(x.iloc[parts['dev']]):
+            assert positions.iloc[train[-1]]+horizon < positions.iloc[test[0]]
+            for name,model in _models().items():
+                oof[name].extend(_fit_predict(model,x,y,scale,train,test))
+            actual.extend(y.iloc[test]); zero.extend(np.zeros(len(test)))
+            drift.extend(np.repeat(float(y.iloc[train].tail(252).median()),len(test)))
+            fold_sizes.append(len(test))
+            fold_bounds.append({"train_last":str(x.index[train[-1]].date()),"test_first":str(x.index[test[0]].date()),"test_last":str(x.index[test[-1]].date()),"gap_sessions":horizon})
         actual = np.asarray(actual)
-        losses = {name: _metric(actual, np.asarray(values)) for name, values in oof.items()}
-        baseline_losses = {"No price change": _metric(actual, np.asarray(zero)), "Historical median": _metric(actual, np.asarray(drift))}
-        baseline_name = min(baseline_losses, key=baseline_losses.get)
-        baseline_dev_mae = baseline_losses[baseline_name]
-        # Weights come exclusively from development folds, never the holdout.
-        raw_weights = {name: max(0.0, baseline_dev_mae - loss) for name, loss in losses.items()}
-        if sum(raw_weights.values()) <= 1e-9:
-            raw_weights = {name: float(name == min(losses, key=losses.get)) for name in names}
-        weights = {name: weight / sum(raw_weights.values()) for name, weight in raw_weights.items()}
-        dev_pred = sum(np.asarray(oof[name]) * weights[name] for name in names)
-        dev_gain = error_skill(_metric(actual, dev_pred), baseline_dev_mae)
-
-        cal, holdout, train_holdout = parts["calibration"], parts["holdout"], parts["holdout_train"]
-        assert positions.iloc[parts["dev"][-1]] + horizon < positions.iloc[cal[0]]
-        assert positions.iloc[train_holdout[-1]] + horizon < positions.iloc[holdout[0]]
-        cal_pred = np.zeros(len(cal))
-        holdout_pred = np.zeros(len(holdout))
-        for name, model in _models().items():
-            if weights[name] > 0:
-                cal_pred += weights[name] * _fit_predict(model, x, y, scale, parts["dev"], cal)
-                holdout_pred += weights[name] * _fit_predict(model, x, y, scale, train_holdout, holdout)
-        # 80% empirical absolute-error interval, calibrated before the holdout.
-        errors = np.abs(y.iloc[cal].to_numpy() - cal_pred) / scale.iloc[cal].to_numpy()
-        quantile = min(1.0, np.ceil((len(errors) + 1) * .8) / len(errors))
-        radius = float(np.quantile(errors, quantile, method="higher"))
+        losses = {n:_metric(actual,np.asarray(v)) for n,v in oof.items()}
+        bases = {"No price change":np.asarray(zero),"Historical median":np.asarray(drift)}
+        baseline_name = min(bases,key=lambda n:_metric(actual,bases[n]))
+        baseline_dev = bases[baseline_name]
+        # Smooth inverse-error weights rather than unstable winner-takes-all gains.
+        inverse = {n:1/max(loss,1e-4) for n,loss in losses.items()}
+        weights = {n:(.5/len(names)+.5*inverse[n]/sum(inverse.values())) for n in names}
+        raw_dev = sum(weights[n]*np.asarray(oof[n]) for n in names)
+        alpha = _choose_blend(actual,raw_dev,baseline_dev,fold_sizes)
+        dev_pred = alpha*raw_dev+(1-alpha)*baseline_dev
+        dev_gain = error_skill(_metric(actual,dev_pred),_metric(actual,baseline_dev))
+        cal,holdout = parts['calibration'],parts['holdout']
+        raw_cal,base_cal,cal_bounds = _walk_predictions(x,y,scale,positions,cal,horizon,weights,baseline_name)
+        raw_test,base_test,test_bounds = _walk_predictions(x,y,scale,positions,holdout,horizon,weights,baseline_name)
+        cal_pred = alpha*raw_cal+(1-alpha)*base_cal
+        holdout_pred = alpha*raw_test+(1-alpha)*base_test
+        # Signed errors preserve asymmetric upside/downside tails. This is an
+        # empirical interval with measured coverage, not an iid conformal claim.
+        residuals = (y.iloc[cal].to_numpy()-cal_pred)/scale.iloc[cal].to_numpy()
+        low_q = min(0.,float(np.quantile(residuals,.1,method="lower")))
+        high_q = max(0.,float(np.quantile(residuals,.9,method="higher")))
         holdout_y = y.iloc[holdout].to_numpy()
-        base_value = 0.0 if baseline_name == "No price change" else float(y.iloc[train_holdout].tail(252).median())
-        base_pred = np.full(len(holdout), base_value)
-        mae, baseline_mae = _metric(holdout_y, holdout_pred), _metric(holdout_y, base_pred)
-        skill = error_skill(mae, baseline_mae)
-        accuracy = float(np.mean(np.sign(holdout_pred) == np.sign(holdout_y)))
-        always_up = float(np.mean(holdout_y > 0))
-        nonoverlap = np.arange(0, len(holdout), horizon)
-        nonoverlap_accuracy = float(np.mean(np.sign(holdout_pred[nonoverlap]) == np.sign(holdout_y[nonoverlap])))
-        coverage = float(np.mean(np.abs(holdout_y - holdout_pred) <= radius * scale.iloc[holdout].to_numpy()))
-        # This is a conservative heuristic evidence weight, NOT a probability.
-        evidence = (min(max(dev_gain, 0), max(skill, 0), .25) / .25
-                    * min(1.0, len(nonoverlap) / 12))
-        evidence *= .75 if accuracy < always_up else 1.0
-        evidence = float(np.clip(evidence, 0, .8))
-        current = feature_frame(prices).iloc[[-1]]
-        if current.isna().any(axis=None):
-            return {"available": False, "reason": "Latest session has incomplete features.", "model_version": VERSION}
-        current_scale = max(float(current.volatility_63.iloc[0]), .003) * np.sqrt(horizon)
-        predictions, fitted = {}, {}
-        for name, model in _models().items():
-            if weights[name] <= 0:
-                continue
-            target = y.to_numpy() / scale.to_numpy()
-            lo, hi = np.quantile(target, [.01, .99])
-            model.fit(x, np.clip(target, lo, hi))
-            predictions[name] = float(np.clip(model.predict(current)[0], -8, 8) * current_scale)
+        mae,baseline_mae = _metric(holdout_y,holdout_pred),_metric(holdout_y,base_test)
+        skill = error_skill(mae,baseline_mae)
+        accuracy = float(np.mean(np.sign(holdout_pred)==np.sign(holdout_y)))
+        always_up = float(np.mean(holdout_y>0))
+        nonoverlap = np.arange(0,len(holdout),horizon)
+        nonoverlap_accuracy = float(np.mean(np.sign(holdout_pred[nonoverlap])==np.sign(holdout_y[nonoverlap])))
+        lower = holdout_pred+low_q*scale.iloc[holdout].to_numpy()
+        upper = holdout_pred+high_q*scale.iloc[holdout].to_numpy()
+        coverage = float(np.mean((holdout_y>=lower)&(holdout_y<=upper)))
+        evidence = min(max(dev_gain,0),max(skill,0),.25)/.25*min(1.,len(nonoverlap)/12)*alpha
+        evidence *= .75 if accuracy < always_up else 1.
+        evidence = float(np.clip(evidence,0,.8))
+        current_scale = max(float(current.volatility_63.iloc[0]),.003)*np.sqrt(horizon)
+        predictions,fitted = {},{}
+        target = y.to_numpy()/scale.to_numpy()
+        lo,hi = np.quantile(target,[.01,.99])
+        for name,model in _models().items():
+            model.fit(x,np.clip(target,lo,hi))
+            predictions[name] = float(np.clip(model.predict(current)[0],-8,8)*current_scale)
             fitted[name] = model
-        raw_log = sum(predictions[n] * weights[n] for n in predictions)
-        baseline_now = 0.0 if baseline_name == "No price change" else float(y.tail(252).median())
-        # Blend only for the research score; the raw forecast remains visible.
-        score_forecast = evidence * raw_log + (1-evidence) * baseline_now
+        raw_log = sum(weights[n]*predictions[n] for n in names)
+        baseline_now = 0. if baseline_name=="No price change" else float(y.tail(252).median())
+        predicted_log = alpha*raw_log+(1-alpha)*baseline_now
         price = float(prices.Close.iloc[-1])
-        importance = {}
-        tree = fitted.get("Extra Trees")
-        if tree is not None:
-            importance = dict(sorted(zip(x.columns, map(float, tree.feature_importances_)), key=lambda item: item[1], reverse=True)[:6])
-    predictions_rows = [{"Date": str(x.index[i].date()), "Actual return": float(np.expm1(y.iloc[i])),
-                         "Model return": float(np.expm1(p)), "Baseline return": float(np.expm1(base_value))}
-                        for i, p in zip(holdout, holdout_pred)]
+        importance = dict(sorted(zip(x.columns,map(float,fitted['Extra Trees'].feature_importances_)),key=lambda item:item[1],reverse=True)[:6])
+    rows = [{"Date":str(x.index[i].date()),"Actual return":float(np.expm1(y.iloc[i])),"Model return":float(np.expm1(p)),"Baseline return":float(np.expm1(b))} for i,p,b in zip(holdout,holdout_pred,base_test)]
     return {
-        "available": True, "model_version": VERSION, "horizon": horizon,
-        "predicted_return": float(np.expm1(raw_log)), "estimated_price": float(price*np.exp(raw_log)),
-        "score_forecast_return": float(np.expm1(score_forecast)),
-        "lower_return": float(np.expm1(raw_log-radius*current_scale)),
-        "upper_return": float(np.expm1(raw_log+radius*current_scale)),
-        "lower_price": float(price*np.exp(raw_log-radius*current_scale)), "upper_price": float(price*np.exp(raw_log+radius*current_scale)),
-        "mae": mae, "baseline_mae": baseline_mae, "baseline": baseline_name,
-        "directional_accuracy": accuracy, "always_up_accuracy": always_up,
-        "nonoverlap_accuracy": nonoverlap_accuracy, "independent_windows": len(nonoverlap),
-        "holdout_skill": float(skill), "development_skill": float(dev_gain),
-        "interval_coverage": coverage, "nominal_coverage": .8,
-        "evidence_weight": evidence, "weights": weights, "development_errors": losses,
-        "holdout_start": str(x.index[holdout[0]].date()), "holdout_end": str(x.index[holdout[-1]].date()),
-        "calibration_start": str(x.index[cal[0]].date()), "calibration_end": str(x.index[cal[-1]].date()),
-        "folds": fold_bounds, "holdout_rows": len(holdout), "training_rows": len(x),
-        "feature_importance": importance, "holdout_predictions": predictions_rows,
-        "trained_seconds": round(time.perf_counter()-start, 3), "as_of": str(prices.index[-1].date()),
+        "available":True,"model_version":VERSION,"horizon":horizon,
+        "predicted_return":float(np.expm1(predicted_log)),"estimated_price":float(price*np.exp(predicted_log)),
+        "score_forecast_return":float(np.expm1(predicted_log)),"raw_ml_return":float(np.expm1(raw_log)),
+        "baseline_return":float(np.expm1(baseline_now)),"ml_blend":alpha,
+        "forecast_kind":"Baseline fallback" if alpha==0 else "Baseline-blended ML",
+        "reason":("Development tests did not justify ML over the baseline." if alpha==0 else f"ML share {alpha:.0%}, chosen before calibration and final testing."),
+        "lower_return":float(np.expm1(predicted_log+low_q*current_scale)),"upper_return":float(np.expm1(predicted_log+high_q*current_scale)),
+        "lower_price":float(price*np.exp(predicted_log+low_q*current_scale)),"upper_price":float(price*np.exp(predicted_log+high_q*current_scale)),
+        "mae":mae,"baseline_mae":baseline_mae,"baseline":baseline_name,
+        "directional_accuracy":accuracy,"always_up_accuracy":always_up,"nonoverlap_accuracy":nonoverlap_accuracy,
+        "independent_windows":len(nonoverlap),"holdout_skill":float(skill),"development_skill":float(dev_gain),
+        "interval_coverage":coverage,"nominal_coverage":.8,"evidence_weight":evidence,"weights":weights,
+        "development_errors":losses,"holdout_start":str(x.index[holdout[0]].date()),"holdout_end":str(x.index[holdout[-1]].date()),
+        "calibration_start":str(x.index[cal[0]].date()),"calibration_end":str(x.index[cal[-1]].date()),
+        "folds":fold_bounds,"calibration_folds":cal_bounds,"holdout_folds":test_bounds,"holdout_rows":len(holdout),
+        "training_rows":len(x),"feature_importance":importance,"holdout_predictions":rows,
+        "nonoverlap_mae":_metric(holdout_y[nonoverlap],holdout_pred[nonoverlap]),
+        "nonoverlap_baseline_mae":_metric(holdout_y[nonoverlap],base_test[nonoverlap]),
+        "trained_seconds":round(time.perf_counter()-start,3),"as_of":str(prices.index[-1].date()),
     }
 
 
@@ -212,9 +238,11 @@ def short_history_forecast(prices, horizon=63, reason="Insufficient history for 
         model = make_pipeline(StandardScaler(), Ridge(alpha=100))
         target = train.target.clip(train.target.quantile(.01), train.target.quantile(.99))
         model.fit(train[x.columns], target)
-        prediction = float(np.clip(model.predict(x.iloc[[-1]])[0], -.7, .7))
+        raw_prediction = float(model.predict(x.iloc[[-1]])[0])
+        blend = min(.25, len(train)/(12*horizon))
+        prediction = float(np.clip(blend*raw_prediction+(1-blend)*prediction, -.7, .7))
         kind = "Short-history ML (unvalidated)"
-        note = f"Ridge regression trained on {len(train)} matured labels; insufficient independent history for full validation."
+        note = f"Ridge regression trained on {len(train)} matured labels; insufficient independent history for full validation; raw ML weight capped at 25%."
     return {"available": False, "predicted_return": float(np.expm1(prediction)),
             "estimated_price": float(c.iloc[-1]*np.exp(prediction)), "evidence_weight": 0.,
             "forecast_kind": kind, "reason": reason + ". " + note,
