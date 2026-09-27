@@ -14,7 +14,12 @@ pages = [st.Page("views/home.py", title="Home", default=True),
 current = st.navigation(pages, position="hidden")
 brand, settings = st.columns([4, 1], vertical_alignment="center")
 with brand:
-    st.markdown('<div class="brand"><span class="brand-mark"></span>buyntiq<span>RESEARCH WORKSPACE</span></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<a class="brand-link" href="/" target="_self" aria-label="Buyntiq home">'
+        '<div class="brand"><span class="brand-mark"></span>buyntiq<span>RESEARCH WORKSPACE</span></div>'
+        '</a>',
+        unsafe_allow_html=True,
+    )
 with settings:
     # This widget lives in the entrypoint so its state survives page switches.
     st.toggle("Demo data", key="demo_mode", on_change=change_mode, help="Use generated prices and company metrics. No real market data.")
