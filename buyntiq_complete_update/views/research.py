@@ -258,6 +258,10 @@ with forecasts:
         with c2: ui.metric("EMPIRICAL 80% RANGE", f"{model['lower_return']:+.0%} to {model['upper_return']:+.0%}", "Not a guaranteed probability band")
         with c3: ui.metric("MEASURED COVERAGE", ui.fmt(model["interval_coverage"], "ratio"), "Coverage on the separate holdout")
         st.caption(f"Calibrated on {model['calibration_start']}–{model['calibration_end']}. Tested on {model['holdout_start']}–{model['holdout_end']}. The range is estimated from past forecast errors and can fail under new market conditions.")
+        if "ml_blend" in model:
+            st.caption(f"Forecast composition: {model['ml_blend']:.0%} ML and {1-model['ml_blend']:.0%} {model['baseline'].lower()}. The mix was selected before final testing. Raw ML estimate: {model['raw_ml_return']:+.1%}; displayed estimate: {model['predicted_return']:+.1%}.")
+            if model["ml_blend"] == 0:
+                st.info("ML did not consistently improve development error. The displayed estimate uses the simple baseline; it is not an ML prediction.")
         if model["evidence_weight"] == 0:
             st.info("No demonstrated error advantage in both validation stages. This forecast has zero weight in the research score.")
         ui.section("VALIDATION", "What the model actually earned")
@@ -271,7 +275,7 @@ with forecasts:
         with st.expander("Models, weights & chronological folds"):
             st.dataframe(pd.DataFrame([{"Model":name, "Ensemble weight (%)":round(w*100,1), "Development MAE (%)":round(model['development_errors'][name]*100,2)} for name,w in model['weights'].items()]), hide_index=True, width="stretch")
             st.dataframe(pd.DataFrame(model["folds"]), hide_index=True, width="stretch")
-            st.caption("Each training block stops a full forecast horizon before the next test block. Model weights use development folds only. Interval width uses the later calibration block. The final model is refitted on all labels currently available.")
+            st.caption("Each training block stops a full forecast horizon before the next test block. Model weights use development folds only. Interval tails use the later calibration block. Calibration and final tests refit chronologically using only matured outcomes. The final model is refitted on all labels currently available.")
             if model["feature_importance"]:
                 st.write("Extra Trees feature importance (global model diagnostic)")
                 st.dataframe(pd.DataFrame(list(model["feature_importance"].items()),columns=["Feature","Importance"]),hide_index=True,width="stretch")
