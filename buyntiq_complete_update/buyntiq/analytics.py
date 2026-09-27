@@ -50,10 +50,13 @@ def analyze(symbol, demo=False, history=None, include_ml=True, refresh=False, ho
     fund_score, fund_notes = fundamental_score(company)
     forecast = None
     model_error = None
+    context, context_notes = {}, []
     if include_ml:
         try:
+            from buyntiq.benchmarks import load_context
             from buyntiq.model import forecast as run_forecast
-            forecast = run_forecast(frame, horizon)
+            context, context_notes = load_context(company.get("sector"), demo, refresh)
+            forecast = run_forecast(frame, horizon, context=context)
         except Exception as exc:
             model_error = f"Forecast unavailable ({type(exc).__name__}). Technical and company research is still available."
     if include_ml and not (forecast or {}).get("available"):
@@ -61,10 +64,13 @@ def analyze(symbol, demo=False, history=None, include_ml=True, refresh=False, ho
         forecast = short_history_forecast(frame, horizon, (forecast or {}).get("reason") or model_error or "Full model unavailable")
     if forecast and forecast.get("available"):
         forecast.setdefault("forecast_kind", "Validated ensemble" if forecast.get("evidence_weight", 0) > 0 else "Ensemble (weak evidence)")
+    if forecast:
+        forecast["context_notes"] = context_notes
     score, components = combined_score(technical["technical_score"], fund_score, company.get("coverage", 0), forecast)
     return {"symbol": symbol, "company": company, "technical": technical, "fundamental_score": fund_score,
             "fundamental_notes": fund_notes, "forecast": forecast, "score": score, "components": components,
             "signal": signal(score), "prices": frame, "model_error": model_error,
+            "forecast_context": context,
             "as_of": str(frame.index[-1].date()), "demo": demo,
             "elapsed": round(time.perf_counter()-start, 2), "created_at": pd.Timestamp.now(tz="UTC").isoformat()}
 
@@ -82,8 +88,10 @@ def model_brief(result):
     else:
         points.append("Company data is unavailable. The score uses the remaining components.")
     if f and f.get("available"):
-        weight = result["components"].get("ML · 3 months", {}).get("weight", 0)
-        if weight > 0:
+        weight = sum(v["weight"] for k, v in result["components"].items() if k.startswith("ML ·"))
+        if f.get("data_stale"):
+            points.append("ML: the estimate uses saved prices after a provider failure and has zero weight in the research score.")
+        elif weight > 0:
             points.append(f"ML: held-out return error was {f['holdout_skill']:.1%} lower than the selected baseline. Its share of the research score is {weight:.1%}.")
         else:
             points.append("ML: the ensemble did not demonstrate an error advantage in both development and holdout periods. It has zero weight in the research score.")
