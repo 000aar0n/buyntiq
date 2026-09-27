@@ -130,3 +130,25 @@ button[kind="primary"]:hover,button[kind="primaryFormSubmit"]:hover { background
   outline: 2px solid #ffffff !important;
   outline-offset: 3px;
 }
+/* Buyntiq brand link: preserves the existing brand appearance */
+.brand-link,
+.brand-link:visited,
+.brand-link:hover,
+.brand-link:active {
+    color: inherit !important;
+    text-decoration: none !important;
+    display: inline-block;
+}
+
+/* Portfolio Builder vertical rhythm only */
+.builder-vspace {
+    height: 1.15rem;
+}
+
+.builder-vspace-sm {
+    height: 0.65rem;
+}
+
+.builder-vspace-lg {
+    height: 1.75rem;
+}
