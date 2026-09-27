@@ -60,7 +60,7 @@ def analyze(symbol, demo=False, history=None, include_ml=True, refresh=False, ho
         from buyntiq.model import short_history_forecast
         forecast = short_history_forecast(frame, horizon, (forecast or {}).get("reason") or model_error or "Full model unavailable")
     if forecast and forecast.get("available"):
-        forecast["forecast_kind"] = "Validated ensemble" if forecast.get("evidence_weight", 0) > 0 else "Ensemble (weak evidence)"
+        forecast.setdefault("forecast_kind", "Validated ensemble" if forecast.get("evidence_weight", 0) > 0 else "Ensemble (weak evidence)")
     score, components = combined_score(technical["technical_score"], fund_score, company.get("coverage", 0), forecast)
     return {"symbol": symbol, "company": company, "technical": technical, "fundamental_score": fund_score,
             "fundamental_notes": fund_notes, "forecast": forecast, "score": score, "components": components,
