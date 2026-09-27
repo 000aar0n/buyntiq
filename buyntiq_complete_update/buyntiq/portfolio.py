@@ -293,8 +293,48 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
     ]
     weights, effective_cap = capped_weights(raw, settings["cap"])
 
+    # Whole-share execution guarantee: every selected company receives at least
+    # one share whenever a dollar budget is supplied. If the budget cannot buy
+    # one share of every selected stock, fail clearly instead of returning
+    # zero-share positions.
+    prices = np.asarray([float(r["technical"]["price"]) for r in chosen], dtype=float)
+    if budget > 0:
+        minimum_cost = float(prices.sum())
+        if minimum_cost > budget + 1e-9:
+            raise ValueError(
+                "Budget is too small to buy at least one share of every selected holding. "
+                f"These {len(chosen)} stocks require at least ${minimum_cost:,.2f}; "
+                f"your budget is ${budget:,.2f}. Increase the budget or request fewer holdings."
+            )
+
+        # Start with one share of every holding, then spend the remaining cash
+        # on whichever position is furthest below its fractional target.
+        share_counts = np.ones(len(chosen), dtype=int)
+        spent_by_position = prices.copy()
+        remaining_cash = float(budget - minimum_cost)
+        target_dollars = np.asarray(weights, dtype=float) * float(budget)
+
+        while True:
+            affordable = prices <= remaining_cash + 1e-9
+            if not affordable.any():
+                break
+            gaps = target_dollars - spent_by_position
+            candidates = np.where(affordable)[0]
+            # Prefer the most under-target position. If every affordable
+            # position is already above target, stop and leave the rest as cash.
+            best = candidates[np.argmax(gaps[candidates])]
+            if gaps[best] <= 0:
+                break
+            share_counts[best] += 1
+            spent_by_position[best] += prices[best]
+            remaining_cash -= prices[best]
+    else:
+        # A zero budget means percentage-only research; there is no executable
+        # whole-share portfolio to simulate.
+        share_counts = np.zeros(len(chosen), dtype=int)
+
     rows = []
-    for r, w in zip(chosen, weights):
+    for index, (r, w) in enumerate(zip(chosen, weights)):
         allocation, price = budget * w, r["technical"]["price"]
         model = r.get("forecast") or {}
         rows.append({
@@ -306,7 +346,7 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
             "Signal": r["signal"],
             "Price": price,
             "Target allocation": float(allocation),
-            "Whole shares": int(allocation // price),
+            "Shares": int(share_counts[index]),
             "ML forecast": model.get("predicted_return"),
             "Forecast method": model.get("forecast_kind", "Unavailable"),
             "Forecast note": model.get("reason", "Ensemble estimate"),
@@ -332,7 +372,7 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
         for i, r in enumerate(ranked, 1)
     ])
 
-    spent = float((table["Whole shares"] * table.Price).sum())
+    spent = float((table["Shares"] * table.Price).sum())
     risk = portfolio_risk(chosen, weights)
     if progress:
         progress(1., "Portfolio ready")
@@ -405,7 +445,7 @@ def positive_forecast(result):
 def projected_portfolio(table, value, whole_shares=False):
     """Sum dollar gains; never treat missing forecasts as zero return."""
     forecasts = pd.to_numeric(table["ML forecast"], errors="coerce")
-    amounts = table["Whole shares"] * table.Price if whole_shares else table.Weight * value
+    amounts = table["Shares"] * table.Price if whole_shares else table.Weight * value
     active = amounts > 0
     valid = np.isfinite(forecasts)
     coverage = float(amounts[active & valid].sum()/amounts[active].sum()) if active.any() else 1.
