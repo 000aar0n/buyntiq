@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-def feature_frame(prices):
+def feature_frame(prices, context=None):
     c = prices.Close.astype(float)
     daily = np.log(c).diff()
     f = pd.DataFrame(index=c.index)
@@ -25,6 +25,34 @@ def feature_frame(prices):
     f["volume_trend"] = (volume.rolling(5).mean() / volume.rolling(63).mean().replace(0, np.nan)).fillna(1).clip(0, 10)
     f["downside_volatility"] = daily.clip(upper=0).rolling(63).std()
     f["return_autocorrelation"] = daily.rolling(63).corr(daily.shift(1)).fillna(0)
+    # Exact session joins: never backfill or treat a missing benchmark as flat.
+    # Incomplete historical context stays NaN and is imputed inside each fitted
+    # training pipeline, with an explicit availability feature for every role.
+    for role in ("market", "sector"):
+        frame = (context or {}).get(role)
+        if frame is None:
+            continue
+        benchmark = frame.Close.astype(float).reindex(c.index)
+        benchmark_daily = np.log(benchmark).diff()
+        extra = pd.DataFrame(index=c.index)
+        for n in (21, 63, 126):
+            momentum = np.log(benchmark / benchmark.shift(n))
+            extra[f"{role}_momentum_{n}"] = momentum
+            extra[f"relative_{role}_momentum_{n}"] = f[f"momentum_{n}"] - momentum
+        extra[f"{role}_distance_ma_200"] = benchmark / benchmark.rolling(200).mean() - 1
+        extra[f"{role}_volatility_21"] = benchmark_daily.rolling(21).std()
+        extra[f"{role}_volatility_63"] = benchmark_daily.rolling(63).std()
+        extra[f"{role}_drawdown_126"] = benchmark / benchmark.rolling(126).max() - 1
+        variance = benchmark_daily.rolling(126).var().clip(lower=1e-8)
+        beta = (daily.rolling(126).cov(benchmark_daily) / variance).clip(-3, 5)
+        extra[f"{role}_beta_126"] = beta
+        extra[f"{role}_correlation_126"] = daily.rolling(126).corr(benchmark_daily)
+        extra[f"{role}_residual_momentum_63"] = f.momentum_63 - beta * extra[f"{role}_momentum_63"]
+        extra = extra.replace([np.inf, -np.inf], np.nan)
+        complete = extra.notna().all(axis=1)
+        extra.loc[~complete, :] = np.nan
+        extra[f"{role}_available"] = complete.astype(float)
+        f = pd.concat([f, extra], axis=1)
     return f.replace([np.inf, -np.inf], np.nan)
 
 
