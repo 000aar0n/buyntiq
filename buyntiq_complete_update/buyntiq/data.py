@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 from buyntiq import cache
 
-PRICE_TTL = 6 * 3600
-COMPANY_TTL = 12 * 3600
+PRICE_TTL = 3600
+COMPANY_TTL = 3600
 
 # A deliberately disclosed starting universe, not a claim to cover the market.
 STARTER = {
