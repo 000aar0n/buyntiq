@@ -44,6 +44,8 @@ def analyze(symbol, demo=False, history=None, include_ml=True, refresh=False, ho
         company_job = pool.submit(data.company, symbol, demo, refresh)
         frame = history if history is not None else data.prices(symbol, demo, refresh)
         company = company_job.result()
+    # Validate before both the full model and the short-history fallback.
+    data.require_price_source(frame, demo)
     technical = technical_analysis_from_data(frame)
     if technical is None:
         raise ValueError("At least 63 valid daily prices are needed for research.")
@@ -56,12 +58,12 @@ def analyze(symbol, demo=False, history=None, include_ml=True, refresh=False, ho
             from buyntiq.benchmarks import load_context
             from buyntiq.model import forecast as run_forecast
             context, context_notes = load_context(company.get("sector"), demo, refresh)
-            forecast = run_forecast(frame, horizon, context=context)
+            forecast = run_forecast(frame, horizon, context=context, demo=demo)
         except Exception as exc:
             model_error = f"Forecast unavailable ({type(exc).__name__}). Technical and company research is still available."
     if include_ml and not (forecast or {}).get("available"):
         from buyntiq.model import short_history_forecast
-        forecast = short_history_forecast(frame, horizon, (forecast or {}).get("reason") or model_error or "Full model unavailable")
+        forecast = short_history_forecast(frame, horizon, (forecast or {}).get("reason") or model_error or "Full model unavailable", demo=demo)
     if forecast and forecast.get("available"):
         forecast.setdefault("forecast_kind", "Validated ensemble" if forecast.get("evidence_weight", 0) > 0 else "Ensemble (weak evidence)")
     if forecast:
