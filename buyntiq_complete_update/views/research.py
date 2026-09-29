@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from buyntiq import ui, data
+from buyntiq import ui, data, accounts
 from buyntiq.analytics import analyze, model_brief
 from buyntiq.state import persistent_widget
 
@@ -178,7 +178,7 @@ left, right = st.columns([4, 1], vertical_alignment="bottom")
 with left:
     entered = persistent_widget(st.text_input, "research_symbol", label="US-listed stock ticker", placeholder="AAPL", max_chars=12)
 with right:
-    clicked = st.button("Analyze stock", type="primary", width="stretch")
+    clicked = st.button("Analyze stock", type="primary", width="stretch", on_click=accounts.remember_current_search)
 
 def choose_symbol(symbol):
     st.session_state.research_symbol = symbol
@@ -188,6 +188,15 @@ if st.session_state.watchlist:
     chips = st.columns(min(6, len(st.session_state.watchlist)))
     for i, s in enumerate(st.session_state.watchlist[:6]):
         chips[i].button(s, key="research_chip_" + s, on_click=choose_symbol, args=(s,), width="stretch")
+
+if st.session_state.recent_searches:
+    with st.expander("Recent searches"):
+        recent_columns = st.columns(min(6, len(st.session_state.recent_searches)))
+        for i, symbol in enumerate(st.session_state.recent_searches):
+            recent_columns[i % len(recent_columns)].button(symbol, key="research_recent_"+symbol,
+                on_click=choose_symbol, args=(symbol,), width="stretch")
+        st.button("Clear recent searches", key="research_clear_recent", on_click=accounts.clear_recent)
+        st.caption(accounts.storage_caption())
 
 if clicked:
     with st.status("Researching your stock…", expanded=True) as status:
@@ -261,6 +270,8 @@ with overview:
 
 with forecasts:
     ui.section("02", "Forecast & uncertainty", "3-month horizon")
+    if model.get("training_data_source"):
+        st.caption(f"Prediction input: {model['training_data_source']} · {model['training_price_rows']:,} adjusted daily price rows · {model['training_price_start']} to {model['training_price_end']}.")
     if model.get("context_notes"):
         st.caption(" ".join(model["context_notes"]))
     if not model.get("available"):
@@ -318,9 +329,9 @@ with forecasts:
                 try:
                     extra_results = {}
                     for label, days in [("1 month",21),("6 months",126),("1 year",252)]:
-                        extra_model = forecast(r["prices"], days, context=r.get("forecast_context"))
+                        extra_model = forecast(r["prices"], days, context=r.get("forecast_context"), demo=r["demo"])
                         if not extra_model.get("available"):
-                            extra_model = short_history_forecast(r["prices"], days, extra_model.get("reason", "Full model unavailable"))
+                            extra_model = short_history_forecast(r["prices"], days, extra_model.get("reason", "Full model unavailable"), demo=r["demo"])
                         extra_results[label] = extra_model
                     st.session_state.extra_forecasts = extra_results
                 except Exception as exc:
