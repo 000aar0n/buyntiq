@@ -4,14 +4,14 @@ A monochrome stock research workspace with **four separate pages**:
 
 | Page | Address | Purpose |
 | --- | --- | --- |
-| Home | `/` | Feature shortcuts, watchlist, and recent session work |
+| Home | `/` | Feature shortcuts, saved lists, and recent session work |
 | Stock Research | `/research` | Company analysis, charts, ML validation, and news |
 | Portfolio Builder | `/builder` | Candidate screening, final-score ranking, and allocations |
 | Portfolio Review | `/review` | Enter/import stocks and shares, then inspect value and risk |
 
 ## Start on Windows
 
-1. Extract the ZIP. Open the `buyntiq` folder.
+1. Open the app folder containing `app.py` (`buyntiq_complete_update` in this repository).
 2. Install **Python 3.12** if needed. Python 3.11 also works with the launcher.
 3. Double-click **`start_windows.bat`**. The first launch installs dependencies.
 4. Open **http://localhost:8501** if the browser does not open automatically.
@@ -20,7 +20,7 @@ For a quick walkthrough, switch **Demo data** on at the top. It uses clearly lab
 
 ## Start with commands (macOS, Linux, or an existing environment)
 
-Run these from the extracted `buyntiq` folder using Python 3.12:
+Run these from the app folder containing `app.py` using Python 3.12:
 
 ```bash
 python -m venv .venv
@@ -32,11 +32,11 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-## Replace the old Streamlit app
+## Deploy or update the Streamlit app
 
-This replaces the single-file layout with an application folder. **Copy the entire project**, including `buyntiq/`, `views/`, `assets/`, `requirements.txt`, and `.streamlit/config.toml`. Do not copy just `app.py`.
+On Streamlit Community Cloud, use branch **`master`** and entry point **`buyntiq_complete_update/app.py`** for this repository. Use Python 3.12 and reboot after dependency updates if needed. For the account update, follow the exact file map in **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)**; upload into existing folders and keep the rest of the repository in place.
 
-On Streamlit Community Cloud, set the entrypoint to **`app.py`** (or `buyntiq/app.py` if you put this entire folder inside your repository), use Python 3.12, and reboot after updating dependencies. Run from the project root so its monochrome theme configuration is loaded. Keep any secrets out of the repository. No API key is required by this version.
+Google login requires credentials in Streamlit Secrets. Saved account lists require the PostgreSQL table in `account_schema.sql` and its private database connection. **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)** explains the Google and Supabase setup. Guest browsing remains available before configuring accounts. Yahoo requests use yfinance without an API key.
 
 If the app is nested inside your repository, also copy `.streamlit/config.toml` to the **repository root's** `.streamlit` folder so Community Cloud loads the theme.
 
@@ -45,7 +45,7 @@ If the app is nested inside your repository, also copy `.streamlit/config.toml` 
 - Native Streamlit pages and distinct URLs; the three tools no longer run together.
 - A consistent charcoal, white, and gray visual system, responsive layouts, and visible keyboard focus.
 - Session state preserves results and holdings while navigating. Mode changes clear results so real and demo data cannot mix.
-- Market requests begin only after an action. Ten-year prices cache for 6 hours, company data for 12 hours, and content-keyed ML results for 6 hours. News and additional forecast horizons load only when requested.
+- Market requests begin only after an action. Ten-year daily prices and company data cache for one hour; content-keyed ML results cache for six hours. News/quote polling runs on the open research page, and additional forecast horizons load on request.
 - Bounded data-request concurrency, provider timeouts, short failure caches, and labeled stale data instead of repeated full retries.
 - Ridge, Extra Trees, and Gradient Boosting candidates with separate development, calibration, and holdout periods.
 - Research scores in all three tools use the same formula. Forecasts that fail the baseline gate have **zero ML score weight**.
@@ -72,8 +72,8 @@ See **`MODEL_CARD.md`** for the exact training boundaries, score formula, and li
 - Quotes use adjusted daily history, not a live execution feed. A cached response has a displayed price date. Fallback data is explicitly marked stale.
 - Portfolio calculations accept confirmed USD quotes. A company's financial reporting currency is tracked separately.
 - Missing data is not fabricated. Unpriced/unverified positions are excluded and disclosed; coverage by value cannot be known for unpriced holdings.
-- Holdings and watchlists stay in the Streamlit session and disappear when that session resets. Download CSVs to keep results. Public market data and model outputs are the only disk-cached content.
-- There is no brokerage connection, order execution, scheduled training, persistent account system, or external LLM call.
+- Signed-in watchlists and recent searches persist in a private database under the verified Google account key. Guest lists and portfolio holdings/results stay in the current session. Download CSVs to retain portfolio results. Public market data and model outputs are the only disk-cached content.
+- There is no brokerage connection, order execution, scheduled training, or external LLM call.
 
 ## Tests
 
@@ -87,6 +87,7 @@ Tests cover causal features, label-boundary gaps, score gating, allocation math,
 ## Project layout
 
 - `app.py`: page routing and shared frame
+- `buyntiq/accounts.py`, `account_schema.sql`: Google identity and private saved lists
 - `views/`: one Python file per page
 - `buyntiq/data.py`, `cache.py`: market sources and cache
 - `buyntiq/features.py`, `model.py`: causal features and validated ensemble
@@ -95,4 +96,4 @@ Tests cover causal features, label-boundary gaps, score gating, allocation math,
 - `buyntiq/ui.py`, `assets/style.css`: reusable monochrome UI
 - `tests/`: model, data, and app checks
 
-Set `BUYNTIQ_CACHE_DIR` to choose a persistent public-data cache folder. By default it uses a temporary directory. Set `BUYNTIQ_DEMO=1` before starting to open directly in demo mode. The data cache is disposable; deleting it only causes fresh downloads and retraining.
+Set `BUYNTIQ_CACHE_DIR` to choose a persistent public-data cache folder. By default it uses a temporary directory. New sessions use Yahoo data; synthetic examples require explicitly selecting the Demo data toggle. The old `BUYNTIQ_DEMO` environment setting no longer enables it. The public-data cache is disposable and separate from saved account lists.
