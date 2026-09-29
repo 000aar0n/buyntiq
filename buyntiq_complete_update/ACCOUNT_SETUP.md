@@ -1,99 +1,113 @@
-# Buyntiq
+# Finish Google sign-in for Buyntiq
 
-A monochrome stock research workspace with **four separate pages**:
+The Supabase `[accounts]` setting stores watchlists and recent searches.
+Google sign-in also needs its own `[auth]` settings in Streamlit. Saving a
+database URL alone does not enable the Google button. The repository's
+`secrets.example.toml` is an example; Streamlit does not load it as real secrets.
 
-| Page | Address | Purpose |
-| --- | --- | --- |
-| Home | `/` | Feature shortcuts, saved lists, and recent session work |
-| Stock Research | `/research` | Company analysis, charts, ML validation, and news |
-| Portfolio Builder | `/builder` | Candidate screening, final-score ranking, and allocations |
-| Portfolio Review | `/review` | Enter/import stocks and shares, then inspect value and risk |
+## 1. Create Google's login credentials
 
-## Start on Windows
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and select or
+   create a project. Open **Google Auth Platform**.
+2. In **Branding**, use **Buyntiq** as the app name and complete the required
+   contact details.
+3. In **Audience**, choose **External** if people outside your organization
+   should be able to log in. Add the Google email you will use under **Test users**.
+4. In **Clients**, select **Create client**, then **Web application**.
+5. Under **Authorized redirect URIs**, add your deployed Streamlit URL followed
+   by `/oauth2callback`. For example, ONLY if your app is still at
+   `https://buyntiq-v2.streamlit.app`, enter:
 
-1. Open the app folder containing `app.py` (`buyntiq_complete_update` in this repository).
-2. Install **Python 3.12** if needed. Python 3.11 also works with the launcher.
-3. Double-click **`start_windows.bat`**. The first launch installs dependencies.
-4. Open **http://localhost:8501** if the browser does not open automatically.
+   ```text
+   https://buyntiq-v2.streamlit.app/oauth2callback
+   ```
 
-For a quick walkthrough, switch **Demo data** on at the top. It uses clearly labeled synthetic prices and financials. Switch it off to request real market data. Demo data is never used as a fallback for a failed real request.
+6. Create the client. Copy its **Client ID** and **Client secret** for the next
+   step. These come from Google, not Supabase.
 
-## Start with commands (macOS, Linux, or an existing environment)
+Use the Streamlit app address, not a GitHub address or a Supabase callback.
+The redirect URI must match exactly in Google and Streamlit.
 
-Run these from the app folder containing `app.py` using Python 3.12:
+## 2. Add Google settings to Streamlit Secrets
 
-```bash
-python -m venv .venv
-# macOS / Linux:
-source .venv/bin/activate
-# Windows PowerShell instead:
-# .venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+Open your deployed app's **Manage app → Settings → Secrets**.
+Keep the existing `[accounts]` section and its database URL.
+If there is no `[auth]` section yet, append this block BELOW the existing settings:
+
+```toml
+[auth]
+redirect_uri = "https://YOUR-APP.streamlit.app/oauth2callback"
+cookie_secret = "REPLACE_WITH_A_LONG_RANDOM_SECRET"
+client_id = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+client_secret = "YOUR_GOOGLE_CLIENT_SECRET"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 ```
 
-## Deploy or update the Streamlit app
+Replace all four placeholder values:
 
-On Streamlit Community Cloud, use branch **`master`** and entry point **`buyntiq_complete_update/app.py`** for this repository. Use Python 3.12 and reboot after dependency updates if needed. For the account update, follow the exact file map in **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)**; upload into existing folders and keep the rest of the repository in place.
+| Setting | Value to put between the quotation marks |
+| --- | --- |
+| `redirect_uri` | The exact callback URL you added in Google |
+| `cookie_secret` | A long random value from your password manager; keep it stable |
+| `client_id` | Google's complete Client ID, including its existing suffix |
+| `client_secret` | Google's Client secret |
 
-Google login requires credentials in Streamlit Secrets. Saved account lists require the PostgreSQL table in `account_schema.sql` and its private database connection. **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)** explains the Google and Supabase setup. Guest browsing remains available before configuring accounts. Yahoo requests use yfinance without an API key.
+Keep `[auth]`, the quotation marks, and the complete `server_metadata_url` line.
+Do not add square brackets around the values. Do not append another
+`.apps.googleusercontent.com` if the copied ID already includes it.
 
-If the app is nested inside your repository, also copy `.streamlit/config.toml` to the **repository root's** `.streamlit` folder so Community Cloud loads the theme.
+If `[auth]` already exists, edit its keys instead of creating a second section.
+The updated account code also supports Google credentials inside `[auth.google]`;
+in that layout, `redirect_uri` and `cookie_secret` still belong directly under
+`[auth]`. Use one layout consistently.
 
-## What changed
-
-- Native Streamlit pages and distinct URLs; the three tools no longer run together.
-- A consistent charcoal, white, and gray visual system, responsive layouts, and visible keyboard focus.
-- Session state preserves results and holdings while navigating. Mode changes clear results so real and demo data cannot mix.
-- Market requests begin only after an action. Ten-year daily prices and company data cache for one hour; content-keyed ML results cache for six hours. News/quote polling runs on the open research page, and additional forecast horizons load on request.
-- Bounded data-request concurrency, provider timeouts, short failure caches, and labeled stale data instead of repeated full retries.
-- Ridge, Extra Trees, and Gradient Boosting candidates with separate development, calibration, and holdout periods.
-- Research scores in all three tools use the same formula. Forecasts that fail the baseline gate have **zero ML score weight**.
-- Highest scores selects the highest **final** research scores among fully analyzed finalists. Diversified selection is explicit and its penalties are documented in the app.
-- Fractional holdings, duplicate-symbol merging, CSV import/export, sector weights, concentration, correlations, and shrunk covariance risk estimates.
-
-## How to use the builder
-
-The starter list contains 62 named stocks across 11 sectors. It is a convenient research universe, not a complete market index. Custom symbols support up to 100 names. The live US directory option screens a disclosed sample of up to 500 symbols; it does not claim to analyze every listed stock.
-
-The first pass ranks technical scores. The requested number of finalists receives full company and ML analysis. **Highest scores ranks that finalist pool**, not stocks that were never fully analyzed. Increase the finalist count to broaden the comparison; it takes longer. The risk profile changes weights and caps, while selection mode controls which stocks are chosen.
-
-Target weights are fractional allocations. Whole shares round down, and the balance is shown as cash. Risk metrics describe target weights, not a trade execution simulation.
-
-## Forecast interpretation
-
-The ML output is an estimate of a future holding-period return, not a promised target or probability of profit. The app displays return error versus a simple baseline, direction accuracy, measured interval coverage, and the small number of non-overlapping validation windows. The model brief is generated directly from these numeric results; it does not use an external language model or invent company facts.
-
-See **`MODEL_CARD.md`** for the exact training boundaries, score formula, and limitations. These changes make model behavior more transparent and better controlled; they do not establish real-world predictive superiority or profitable trading performance.
-
-## Data and privacy
-
-- Live data comes from Yahoo Finance through yfinance. The directory comes from Nasdaq endpoints. Provider access and formats can change.
-- Quotes use adjusted daily history, not a live execution feed. A cached response has a displayed price date. Fallback data is explicitly marked stale.
-- Portfolio calculations accept confirmed USD quotes. A company's financial reporting currency is tracked separately.
-- Missing data is not fabricated. Unpriced/unverified positions are excluded and disclosed; coverage by value cannot be known for unpriced holdings.
-- Signed-in watchlists and recent searches persist in a private database under the verified Google account key. Guest lists and portfolio holdings/results stay in the current session. Download CSVs to retain portfolio results. Public market data and model outputs are the only disk-cached content.
-- There is no brokerage connection, order execution, scheduled training, or external LLM call.
-
-## Tests
+For a random cookie secret, you can also run this on your own computer:
 
 ```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -q
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Tests cover causal features, label-boundary gaps, score gating, allocation math, final-score selection, provider failures, currency handling, page isolation, session persistence, and both portfolio workflows. Synthetic-data tests verify behavior, not market prediction accuracy. See `VERIFICATION.md` for results from this build.
+Click **Save**. Reboot the app if it does not reload the settings automatically.
+Real credentials belong in Streamlit Secrets, never in GitHub or a chat message.
 
-## Project layout
+## 3. Check login and saved lists
 
-- `app.py`: page routing and shared frame
-- `buyntiq/accounts.py`, `account_schema.sql`: Google identity and private saved lists
-- `views/`: one Python file per page
-- `buyntiq/data.py`, `cache.py`: market sources and cache
-- `buyntiq/features.py`, `model.py`: causal features and validated ensemble
-- `buyntiq/analytics.py`, `portfolio.py`: shared scores and allocations
-- `buyntiq/legacy_calculations.py`: retained technical/company calculations and directory parsing
-- `buyntiq/ui.py`, `assets/style.css`: reusable monochrome UI
-- `tests/`: model, data, and app checks
+1. Open **Account → Sign in with Google**. Complete Google's sign-in.
+2. Confirm your name appears in Account. Edit and save your watchlist.
+3. Sign out, then sign in with the same Google account. The saved list should return.
+4. If Account shows a sync warning, use **Retry sync** after checking the database.
 
-Set `BUYNTIQ_CACHE_DIR` to choose a persistent public-data cache folder. By default it uses a temporary directory. New sessions use Yahoo data; synthetic examples require explicitly selecting the Demo data toggle. The old `BUYNTIQ_DEMO` environment setting no longer enables it. The public-data cache is disposable and separate from saved account lists.
+While the Google project is in Testing, use an email added to its Test users.
+Before opening registration more widely, finish the publishing requirements
+shown under Google's **Audience** settings.
+
+## Supabase setup, if not completed earlier
+
+In your Supabase project, open **SQL Editor** and run the repository's
+`account_schema.sql`. It creates the private table and preserves existing rows
+when rerun. In **Connect**, copy the **Session pooler** PostgreSQL URI. Put it in
+Streamlit Secrets as `[accounts]` → `database_url`, replacing the password
+placeholder with the database password. Percent-encode reserved password
+characters in the URI, for example `@` as `%40`.
+
+This app uses Supabase for storage and Streamlit for Google login. Enabling
+Google under Supabase Auth does not configure this app's `st.login()` flow.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Google sign-in setup is incomplete | The five Google settings above exist in Streamlit Secrets, with no empty values or example placeholders. The metadata URL must match exactly. |
+| `redirect_uri_mismatch` | The full callback URI matches in Google and Streamlit. |
+| Google denies access | Your email is a Test user; also check the project's audience and any organization restrictions. |
+| Login works but lists cannot sync | The SQL setup ran and `[accounts].database_url` has the correct pooler address and password. |
+| Tab still shows the old square | Confirm `assets/favicon.svg` was added, then refresh or open the app in a new tab. |
+
+These checks detect incomplete local configuration. They cannot prove that a
+Google credential is valid or that the hosted database is reachable. Test both
+with your deployed app after saving the private settings.
+
+Official references: [Streamlit Google login](https://docs.streamlit.io/develop/tutorials/authentication/google),
+[Streamlit login settings](https://docs.streamlit.io/develop/api-reference/user/st.login),
+[Streamlit app settings](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/app-settings),
+[Supabase database connections](https://supabase.com/docs/guides/database/connecting-to-postgres).
