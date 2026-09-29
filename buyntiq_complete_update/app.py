@@ -1,43 +1,75 @@
 """Run from this folder with: python -m streamlit run app.py"""
 
-from pathlib import Path
-
 import streamlit as st
 
 from buyntiq.state import initialize, change_mode
-from buyntiq.ui import styles
+from buyntiq.ui import ASSETS, styles
+from buyntiq import accounts
 
 
-# Use the existing Buyntiq favicon directly from this app folder.
-# Reading the SVG into a string avoids working-directory/path issues on Streamlit Cloud.
-FAVICON_PATH = Path(__file__).resolve().parent / "assets" / "favicon.svg"
-
-try:
-    PAGE_ICON = FAVICON_PATH.read_text(encoding="utf-8")
-except OSError:
-    # Black fallback so the tab never goes back to the old square icon.
-    PAGE_ICON = """
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-      <rect width="64" height="64" rx="10" fill="#000000"/>
-      <text x="32" y="44"
-            text-anchor="middle"
-            font-family="Arial, Helvetica, sans-serif"
-            font-size="42"
-            font-weight="800"
-            fill="#ffffff">B</text>
-    </svg>
-    """
-
+# =========================================================
+# PAGE CONFIG
+# =========================================================
+# Uses the existing Buyntiq B favicon in:
+# buyntiq_complete_update/assets/favicon.svg
+# =========================================================
 
 st.set_page_config(
     page_title="Buyntiq",
-    page_icon=PAGE_ICON,
+    page_icon=str(ASSETS / "favicon.svg"),
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
+
+# =========================================================
+# APP INITIALIZATION
+# =========================================================
+
 initialize()
+
+# Restore/sync the signed-in user's account state before any page widgets render.
+accounts.sync_session()
+
+# Existing Buyntiq black / monochrome UI.
 styles()
+
+
+# =========================================================
+# ACCOUNT BUTTON SAFETY STYLE
+# =========================================================
+# The account module already styles this in the account build,
+# but this guarantees the top-level Account trigger stays black
+# with readable white text even if other UI CSS changes.
+# =========================================================
+
+st.markdown(
+    """
+    <style>
+    .st-key-account_control [data-testid="stPopover"] button {
+        background:#000000 !important;
+        color:#ffffff !important;
+        border:1px solid #505050 !important;
+        border-radius:0 !important;
+        box-shadow:none !important;
+        font-weight:800 !important;
+    }
+
+    .st-key-account_control [data-testid="stPopover"] button p,
+    .st-key-account_control [data-testid="stPopover"] button svg {
+        color:#ffffff !important;
+        fill:#ffffff !important;
+    }
+
+    .st-key-account_control [data-testid="stPopover"] button:hover {
+        background:#161616 !important;
+        color:#ffffff !important;
+        border-color:#9a9a9a !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # =========================================================
@@ -74,28 +106,34 @@ current = st.navigation(
 
 
 # =========================================================
-# BUYNTIQ HEADER
+# TOP HEADER
 # =========================================================
-# Same black / monochrome UI as before.
-# buyntiq.ui.styles() remains authoritative for the design.
+# Same layout as the account-enabled Buyntiq build:
+# Buyntiq brand | Account | Demo data
 # =========================================================
 
-brand, settings = st.columns(
-    [4, 1],
+brand, account, settings = st.columns(
+    [4, 1.25, 1],
     vertical_alignment="center",
 )
 
 with brand:
     st.markdown(
-        """
-        <div class="brand">
-            <span class="brand-mark"></span>
-            buyntiq
-            <span>RESEARCH WORKSPACE</span>
-        </div>
-        """,
+        '<a class="brand-link" href="/" target="_self" aria-label="Buyntiq home">'
+        '<div class="brand">'
+        '<span class="brand-mark"></span>'
+        'buyntiq'
+        '<span>RESEARCH WORKSPACE</span>'
+        '</div>'
+        '</a>',
         unsafe_allow_html=True,
     )
+
+with account:
+    # Restored Account button/menu.
+    # The actual sign-in/account behavior remains centralized in
+    # buyntiq/accounts.py so app.py does not duplicate auth logic.
+    accounts.render_account_menu()
 
 with settings:
     # This widget lives in the entrypoint so its state survives page switches.
@@ -129,14 +167,10 @@ with st.container(key="navigation"):
 
 if st.session_state.demo_mode:
     st.markdown(
-        """
-        <div class="demo-notice">
-            <strong>DEMO MODE</strong>
-            <span>
-                Prices, financials, forecasts, and results use synthetic data.
-            </span>
-        </div>
-        """,
+        '<div class="demo-notice">'
+        '<strong>DEMO MODE</strong>'
+        '<span>Prices, financials, forecasts, and results use synthetic data.</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -153,11 +187,9 @@ current.run()
 # =========================================================
 
 st.markdown(
-    """
-    <div class="app-footer">
-        <span>buyntiq / independent research</span>
-        <span>Historical data. Measured uncertainty. No promised returns.</span>
-    </div>
-    """,
+    '<div class="app-footer">'
+    '<span>buyntiq / independent research</span>'
+    '<span>Historical data. Measured uncertainty. No promised returns.</span>'
+    '</div>',
     unsafe_allow_html=True,
 )
