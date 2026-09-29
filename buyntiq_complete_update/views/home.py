@@ -1,5 +1,6 @@
 import streamlit as st
 from buyntiq.ui import section
+from buyntiq import accounts
 
 st.markdown('''<div class="home-hero"><div class="eyebrow">A little more signal. A lot more clarity.</div>
 <h1>Understand the market.<br><span class="muted-title">Build your perspective.</span></h1>
@@ -28,11 +29,18 @@ else:
     st.caption("Save symbols below to keep your research close by.")
 with st.expander("Edit watchlist"):
     text = st.text_input("Tickers, separated by commas", value=", ".join(st.session_state.watchlist), key="home_watchlist_input")
-    if st.button("Save watchlist"):
-        from buyntiq.data import parse_symbols
-        st.session_state.watchlist = parse_symbols(text, 18)
-        st.rerun()
-    st.caption("Saved in this browser session. Holdings and watchlists are not written to a shared server file.")
+    st.button("Save watchlist", on_click=lambda: accounts.save_watchlist(st.session_state.home_watchlist_input))
+    st.caption(accounts.storage_caption())
+
+if st.session_state.recent_searches:
+    section("RECENT", "Recent searches", "Newest first")
+    columns = st.columns(min(6, len(st.session_state.recent_searches)))
+    for i, ticker in enumerate(st.session_state.recent_searches):
+        if columns[i % len(columns)].button(ticker, key="home_recent_"+ticker, width="stretch"):
+            st.session_state.research_symbol = ticker
+            st.session_state._research_symbol = ticker
+            st.switch_page("views/research.py")
+    st.button("Clear recent searches", key="home_clear_recent", on_click=accounts.clear_recent)
 
 section("02", "Continue your work", "Current session")
 activity = [
