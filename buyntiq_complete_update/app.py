@@ -46,11 +46,9 @@ if _theme_changed:
     # Theme metadata is sent before the script starts; resend it after an override.
     st.rerun()
 
-FAVICON_PATH = Path(__file__).resolve().parent / "assets" / "favicon.svg"
-
 st.set_page_config(
     page_title="Buyntiq",
-    page_icon=str(FAVICON_PATH) if FAVICON_PATH.exists() else "B",
+    page_icon="buyntiq_complete_update/assets/favicon.svg",
     layout="wide",
 )
 
