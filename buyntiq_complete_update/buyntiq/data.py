@@ -117,17 +117,51 @@ def _read_prices(symbol, ttl=PRICE_TTL):
         payload = saved["frame"]
         frame = pd.DataFrame(payload["data"], columns=payload["columns"], index=pd.to_datetime(payload["index"]), dtype=float)
         frame.attrs.update(saved["meta"])
+        require_price_source(frame, demo=False)
         return frame
     except (ValueError, KeyError, TypeError):
         return None
 
 
 def _save_prices(symbol, frame):
-    frame.attrs.update(source="Yahoo Finance · adjusted daily history", fetched_at=pd.Timestamp.now(tz="UTC").isoformat(), stale=False, demo=False)
+    if is_demo_history(frame):
+        raise ValueError("Synthetic prices cannot be saved as Yahoo history.")
+    frame.attrs.update(source="Yahoo Finance · adjusted daily history", provider="yahoo",
+                       fetched_at=pd.Timestamp.now(tz="UTC").isoformat(), stale=False, demo=False)
     serializable = frame.astype(object).where(frame.notna(), None)
     payload = {"columns": list(frame.columns), "index": [str(d) for d in frame.index], "data": serializable.to_numpy().tolist()}
     cache.write("prices", symbol, {"frame": payload, "meta": frame.attrs})
     return frame
+
+
+def is_demo_history(frame):
+    return (bool(frame.attrs.get("demo", False)) or
+            "synthetic" in str(frame.attrs.get("source", "")).lower())
+
+
+def require_price_source(frame, demo=False):
+    """Do not train live forecasts on demo data or an unverified history source."""
+    synthetic = is_demo_history(frame)
+    if demo:
+        if not synthetic:
+            raise ValueError("Demo mode requires explicitly marked synthetic history.")
+    elif synthetic:
+        raise ValueError("Live predictions require Yahoo price history; synthetic input was rejected. Turn off Demo data and analyze again.")
+    elif not (frame.attrs.get("provider") == "yahoo" or
+              str(frame.attrs.get("source", "")).startswith("Yahoo Finance")):
+        raise ValueError("Price history has no Yahoo source metadata. Reload the stock from Yahoo before predicting.")
+
+
+def _price_failure_reason(exc):
+    """User-facing cause without exposing provider URLs, cookies or response bodies."""
+    kind = type(exc).__name__.lower()
+    if "ratelimit" in kind:
+        return "Yahoo rate-limited the request. Wait a few minutes and try again."
+    if "timeout" in kind:
+        return "The Yahoo request timed out. Try again when the provider responds."
+    if "connection" in kind:
+        return "A connection to Yahoo could not be established."
+    return "Yahoo did not return usable price history for this ticker."
 
 
 def _stock(symbol):
@@ -148,20 +182,23 @@ def prices(symbol, demo=False, refresh=False):
         if saved is not None and not refresh:
             return saved
         failed = cache.read("failures", "prices-" + symbol, 60)
-        try:
-            if failed and not refresh:
-                raise ValueError("The data provider recently declined this request. Retry in a minute.")
-            frame = clean_prices(_stock(symbol).history(period="10y", auto_adjust=True, timeout=8, raise_errors=True), symbol)
-            if frame is not None:
-                return _save_prices(symbol, frame)
-        except Exception:
-            pass
-        cache.write("failures", "prices-" + symbol, {"failed": True})
+        reason = (failed or {}).get("reason", "Yahoo recently declined this request. Retry in a minute.")
+        if not failed or refresh:
+            try:
+                frame = clean_prices(_stock(symbol).history(period="10y", auto_adjust=True, timeout=8, raise_errors=True), symbol)
+                if frame is not None:
+                    return _save_prices(symbol, frame)
+                reason = "Yahoo returned no usable history for this ticker."
+            except Exception as exc:
+                reason = _price_failure_reason(exc)
+            # Do not extend the failure window on every repeated cache read.
+            cache.write("failures", "prices-" + symbol, {"failed": True, "reason": reason})
         stale = _read_prices(symbol, 7 * 24 * 3600)
         if stale is not None:
             stale.attrs["stale"] = True
+            stale.attrs["provider_error"] = reason
             return stale
-        raise ValueError(f"No price history for {symbol}. Check the symbol or retry when the provider is available.")
+        raise ValueError(f"No price history for {symbol}. {reason} No synthetic prices were substituted.")
 
 
 def batch_prices(symbols, demo=False, progress=None):
