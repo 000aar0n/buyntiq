@@ -1,11 +1,18 @@
-"""Session-only user inputs. Pages cannot delete each other's durable values."""
-import os
+"""Session workspace; signed-in watchlists/searches sync through accounts.py."""
 import streamlit as st
 
 
 def initialize():
-    defaults = {"demo_mode": os.getenv("BUYNTIQ_DEMO", "0") == "1",
+    # A new deployment/session starts on actual Yahoo data, even if an older
+    # environment flag or session selected synthetic examples. Demo still
+    # requires an explicit user toggle after initialization.
+    if st.session_state.get("price_source_policy") != "yahoo-6.0.1":
+        st.session_state.demo_mode = False
+        change_mode()
+        st.session_state.price_source_policy = "yahoo-6.0.1"
+    defaults = {"demo_mode": False,
                 "watchlist": ["AAPL", "MSFT", "NVDA", "AMD", "META"],
+                "recent_searches": [],
                 "research_symbol": "AAPL", "research_result": None,
                 "builder_result": None, "review_result": None,
                 "review_rows": [{"Ticker": "", "Shares": 0.0}, {"Ticker": "", "Shares": 0.0}],
