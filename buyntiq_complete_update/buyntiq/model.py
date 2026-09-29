@@ -9,11 +9,11 @@ import time
 import threading
 import numpy as np
 import pandas as pd
-from buyntiq import cache
+from buyntiq import cache, data
 from buyntiq.benchmarks import prepare_context
 from buyntiq.features import dataset, feature_frame
 
-VERSION = "buyntiq-ensemble-6.0.0"
+VERSION = "buyntiq-ensemble-6.0.1"
 _training_lock = threading.RLock()
 HORIZONS = {"1 month": 21, "3 months": 63, "6 months": 126, "1 year": 252}
 
@@ -60,8 +60,8 @@ def error_skill(mae, baseline_mae):
     return 0.0 if baseline_mae <= 1e-9 else 1 - mae / baseline_mae
 
 
-def _digest(prices, horizon, context):
-    digest = hashlib.sha256(f"{VERSION}-{horizon}".encode())
+def _digest(prices, horizon, context, demo=False):
+    digest = hashlib.sha256(f"{VERSION}-{horizon}-demo={bool(demo)}".encode())
     digest.update(pd.util.hash_pandas_object(prices[["Close", "Volume"]], index=True).values.tobytes())
     for role, frame in sorted(context.items()):
         digest.update(role.encode())
@@ -69,12 +69,23 @@ def _digest(prices, horizon, context):
     return digest.hexdigest()
 
 
-def forecast(prices, horizon=63, context=None):
+def _source_metadata(prices, demo):
+    return {"training_data_source": "Synthetic demo" if demo else "Yahoo Finance",
+            "synthetic_data": bool(demo), "training_price_rows": len(prices),
+            "training_price_start": str(prices.index[0].date()),
+            "training_price_end": str(prices.index[-1].date())}
+
+
+def forecast(prices, horizon=63, context=None, *, demo=False):
     """Network-free model; cache changes with stock AND benchmark observations."""
     if horizon not in HORIZONS.values():
         raise ValueError("Supported horizons are 21, 63, 126, and 252 sessions.")
+    data.require_price_source(prices, demo)
+    for frame in (context or {}).values():
+        if frame is not None:
+            data.require_price_source(frame, demo)
     usable, report = prepare_context(prices, context)
-    key = _digest(prices, horizon, usable)
+    key = _digest(prices, horizon, usable, demo)
     with cache.lock_for(key):
         saved = cache.read("models", key, 6 * 3600)
         if saved:
@@ -86,6 +97,7 @@ def forecast(prices, horizon=63, context=None):
             result = dict(result, cache_hit=False)
     # Provider status is current metadata, not a cached claim of data freshness.
     result["context_report"] = report
+    result.update(_source_metadata(prices, demo))
     result["data_stale"] = bool(prices.attrs.get("stale", False))
     if result["data_stale"]:
         result["evidence_weight"] = 0.0
@@ -335,11 +347,12 @@ def _train(prices, horizon, context=None):
     }
 
 
-def short_history_forecast(prices, horizon=63, reason="Insufficient history for full validation"):
+def short_history_forecast(prices, horizon=63, reason="Insufficient history for full validation", *, demo=False):
     """Limited-evidence estimates; never award research-score weight."""
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import Ridge
+    data.require_price_source(prices, demo)
     c = prices.Close.astype(float)
     daily = np.log(c).diff()
     x = pd.DataFrame(index=c.index)
@@ -365,4 +378,4 @@ def short_history_forecast(prices, horizon=63, reason="Insufficient history for 
     return {"available": False, "predicted_return": float(np.expm1(prediction)),
             "estimated_price": float(c.iloc[-1]*np.exp(prediction)), "evidence_weight": 0.,
             "forecast_kind": kind, "reason": reason + ". " + note,
-            "training_rows": len(train), "horizon": horizon}
+            "training_rows": len(train), "horizon": horizon, **_source_metadata(prices, demo)}
