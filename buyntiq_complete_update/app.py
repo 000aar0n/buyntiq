@@ -2,9 +2,11 @@
 import streamlit as st
 from buyntiq.state import initialize, change_mode
 from buyntiq.ui import styles
+from buyntiq import accounts
 
 st.set_page_config(page_title="Buyntiq", page_icon="◼", layout="wide", initial_sidebar_state="collapsed")
 initialize()
+accounts.sync_session()
 styles()
 
 pages = [st.Page("views/home.py", title="Home", default=True),
@@ -12,7 +14,7 @@ pages = [st.Page("views/home.py", title="Home", default=True),
          st.Page("views/builder.py", title="Portfolio builder", url_path="builder"),
          st.Page("views/review.py", title="Portfolio review", url_path="review")]
 current = st.navigation(pages, position="hidden")
-brand, settings = st.columns([4, 1], vertical_alignment="center")
+brand, account, settings = st.columns([4, 1.25, 1], vertical_alignment="center")
 with brand:
     st.markdown(
         '<a class="brand-link" href="/" target="_self" aria-label="Buyntiq home">'
@@ -20,6 +22,8 @@ with brand:
         '</a>',
         unsafe_allow_html=True,
     )
+with account:
+    accounts.render_account_menu()
 with settings:
     # This widget lives in the entrypoint so its state survives page switches.
     st.toggle("Demo data", key="demo_mode", on_change=change_mode, help="Use generated prices and company metrics. No real market data.")
