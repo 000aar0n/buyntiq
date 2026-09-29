@@ -5,6 +5,7 @@ Credentials stay in Streamlit secrets; no passwords or OAuth tokens are stored.
 """
 import hashlib
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 import streamlit as st
 from buyntiq.data import normalize_symbol, parse_symbols
@@ -13,6 +14,7 @@ DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "AMD", "META"]
 MAX_WATCHLIST = 30
 MAX_RECENT = 12
 GOOGLE_ISSUERS = {"https://accounts.google.com", "accounts.google.com"}
+GOOGLE_METADATA_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 
 @dataclass(frozen=True)
@@ -40,14 +42,44 @@ def current_identity():
 def _settings(section):
     try:
         return dict(st.secrets.get(section, {}))
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
         return {}
 
 
-def login_ready():
+def _google_login_settings():
+    """Support Streamlit's default [auth] and named [auth.google] layouts."""
     auth = _settings("auth")
-    return all(auth.get(k) for k in ("redirect_uri", "cookie_secret", "client_id", "client_secret")) and \
-        auth.get("server_metadata_url") == "https://accounts.google.com/.well-known/openid-configuration"
+    google = auth.get("google")
+    return (auth, google, "google") if isinstance(google, Mapping) else (auth, auth, None)
+
+
+def login_setup_issues():
+    """Return incomplete setting names only; never expose secret values."""
+    auth, provider, _ = _google_login_settings()
+    values = {**{key: auth.get(key) for key in ("redirect_uri", "cookie_secret")},
+              **{key: provider.get(key) for key in ("client_id", "client_secret")}}
+    issues = []
+    for key, value in values.items():
+        if (not isinstance(value, str) or not value.strip()
+                or value.strip().startswith(("YOUR_", "REPLACE_", "PASTE_"))
+                or (key == "redirect_uri" and "YOUR-APP" in value)):
+            issues.append(key)
+    if provider.get("server_metadata_url") != GOOGLE_METADATA_URL:
+        issues.append("server_metadata_url")
+    return tuple(issues)
+
+
+def login_ready():
+    return not login_setup_issues()
+
+
+def _login():
+    if login_ready():
+        _, _, provider = _google_login_settings()
+        if provider:
+            st.login(provider)
+        else:
+            st.login()
 
 
 def clean_symbols(values, limit):
@@ -216,20 +248,32 @@ def _logout():
 
 def render_account_menu():
     # The app may use Streamlit's light base theme under its dark custom CSS.
-    # Scope these overrides to this popup so its text stays readable in either.
+    # Scope overrides to the account trigger and its portalled popup.
     st.html("""<style>
+    .st-key-account_control [data-testid="stPopover"] button {
+      background:#000000!important; color:#ffffff!important;
+      border:1px solid #606060!important; border-radius:7px!important;
+      min-height:42px; font-weight:600;
+    }
+    .st-key-account_control [data-testid="stPopover"] button p,
+    .st-key-account_control [data-testid="stPopover"] button svg {color:#ffffff!important;}
+    .st-key-account_control [data-testid="stPopover"] button:hover {
+      background:#111111!important; border-color:#a0a0a0!important;
+    }
     [data-testid="stPopoverBody"]:has(.st-key-account_panel) {
-      background:#171717!important; color:#f0f0f0!important;
-      border:1px solid #383838!important; color-scheme:dark;
+      background:#0c0c0c!important; color:#ffffff!important;
+      border:1px solid #505050!important; color-scheme:dark;
     }
     [data-testid="stPopoverBody"] div:has(.st-key-account_panel) {background:transparent!important;}
-    .st-key-account_panel [data-testid="stText"] {color:#f0f0f0!important;}
-    .st-key-account_panel [data-testid="stCaptionContainer"] p {color:#b5b5b5!important;}
-    .st-key-account_panel button {background:#242424!important; color:#f0f0f0!important;}
-    .st-key-account_panel button:disabled {opacity:.65;}
+    .st-key-account_panel p, .st-key-account_panel [data-testid="stText"] {color:#ffffff!important;}
+    .st-key-account_panel [data-testid="stCaptionContainer"] p {color:#c8c8c8!important;}
+    .st-key-account_panel button {background:#000000!important; color:#ffffff!important; border-color:#606060!important;}
+    .st-key-account_panel button:hover:not(:disabled) {background:#161616!important; border-color:#a0a0a0!important;}
+    .st-key-account_panel button:disabled {background:#171717!important; color:#bdbdbd!important; opacity:1;}
+    .st-key-account_panel button:disabled p {color:#bdbdbd!important;}
     </style>""")
     identity = current_identity()
-    with st.popover("Account", width="stretch"), st.container(key="account_panel"):
+    with st.container(key="account_control"), st.popover("Account", width="stretch"), st.container(key="account_panel"):
         if identity:
             st.text(identity.name)
             if identity.email:
@@ -243,6 +287,6 @@ def render_account_menu():
         else:
             st.write("Keep your watchlist and recent searches when you return.")
             ready = login_ready()
-            st.button("Sign in with Google", on_click=st.login, disabled=not ready, width="stretch")
+            st.button("Sign in with Google", on_click=_login, disabled=not ready, width="stretch")
             if not ready:
-                st.caption("Account sign-in is not available yet.")
+                st.caption("Google sign-in setup is incomplete. You can continue browsing as a guest.")
