@@ -72,10 +72,12 @@ def test_price_shapes_are_normalized_without_cross_ticker_contamination():
         pd.testing.assert_series_equal(got.Close,original.Close,check_freq=False)
 
 
-def test_cached_model_and_analysis_are_consistent():
+def test_cached_model_and_analysis_are_consistent(monkeypatch):
+    # Compare identical stock-only inputs; context selection has separate tests.
+    monkeypatch.setattr("buyntiq.benchmarks.load_context", lambda *a: ({}, []))
     frame=data.demo_prices("AAPL")
-    first=forecast(frame,63)
-    second=forecast(frame,63)
+    first=forecast(frame,63,demo=True)
+    second=forecast(frame,63,demo=True)
     assert first["available"] and second["cache_hit"]
     assert first["predicted_return"] == second["predicted_return"]
     assert first["lower_return"] <= first["predicted_return"] <= first["upper_return"]
@@ -85,7 +87,7 @@ def test_cached_model_and_analysis_are_consistent():
     analysis=analyze("AAPL",demo=True)
     assert analysis["forecast"]["predicted_return"] == first["predicted_return"]
     # For unsupported listings, return an explicit reason rather than a made-up model.
-    assert not forecast(frame.tail(400),63)["available"]
+    assert not forecast(frame.tail(400),63,demo=True)["available"]
 
 
 def test_demo_portfolios_math_and_final_ranking():
@@ -93,7 +95,7 @@ def test_demo_portfolios_math_and_final_ranking():
     table=result["table"]
     assert table.Weight.sum() == pytest.approx(1)
     assert table.Ticker.tolist() == result["ranking"].head(3).Ticker.tolist()
-    spent=float((table["Whole shares"]*table.Price).sum())
+    spent=float((table["Shares"]*table.Price).sum())
     assert spent+result["cash"] == pytest.approx(10000)
     assert result["risk"]["volatility"] > 0
     rated=review({"AAPL":2.5,"MSFT":3},demo=True)

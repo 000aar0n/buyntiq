@@ -5,7 +5,10 @@ def test_live_cache_roundtrip_and_stale_fallback(tmp_path,monkeypatch):
     monkeypatch.setattr(cache,"ROOT",tmp_path)
     class Provider:
         def history(self,**kwargs):
-            return data.demo_prices("AAPL").copy()
+            frame = data.demo_prices("AAPL").copy()
+            # Mock the raw Yahoo response, before our source metadata is added.
+            frame.attrs.clear()
+            return frame
     monkeypatch.setattr(data,"_stock",lambda _:Provider())
     frame=data.prices("AAPL")
     saved=data.prices("AAPL")

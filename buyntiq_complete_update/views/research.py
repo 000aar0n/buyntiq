@@ -1,7 +1,15 @@
 import streamlit as st
 import pandas as pd
-from buyntiq import ui, data, accounts
-from buyntiq.analytics import analyze, model_brief
+from buyntiq import ui, data, accounts, billing
+from buyntiq.analytics import model_brief
+
+def analyze(symbol, demo=False, refresh=False):
+    from buyntiq.analytics import analyze as compute
+    with billing.action("research") as permit:
+        result = compute(symbol, demo=demo, refresh=refresh, include_ml=permit.pro)
+        result["_plan_pro"] = permit.pro
+        return result
+
 from buyntiq.state import persistent_widget
 
 # News retrieval and relevance rules are local to this page.
@@ -174,6 +182,8 @@ def _quote_panel(symbol, demo, currency):
 
 
 ui.header("01 / Stock research", "Look beneath the ticker.", "Price action, company quality, and an ML forecast you can inspect.")
+plan = billing.access()
+st.caption(f"{'Pro' if plan.pro else 'Free'} · {billing.limit_for('research', plan.pro)} stock analyses per day. Pro includes ML forecasts. Sign in through Account to run an analysis.")
 left, right = st.columns([4, 1], vertical_alignment="bottom")
 with left:
     entered = persistent_widget(st.text_input, "research_symbol", label="US-listed stock ticker", placeholder="AAPL", max_chars=12)
@@ -200,7 +210,7 @@ if st.session_state.recent_searches:
 
 if clicked:
     with st.status("Researching your stock…", expanded=True) as status:
-        st.write("Loading prices and company data, then validating the 3-month ensemble.")
+        st.write("Loading prices and company data. Pro analyses also validate the 3-month ensemble.")
         try:
             result = analyze(entered, demo=st.session_state.demo_mode)
             st.session_state.research_result = result
@@ -215,7 +225,7 @@ if clicked:
 
 r = st.session_state.research_result
 if not r:
-    st.markdown('<div class="empty-state"><h3>Start with a company you know.</h3>Enter a ticker above, then select Analyze stock.<br>The first request includes historical model validation.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="empty-state"><h3>Start with a company you know.</h3>Enter a ticker above, then select Analyze stock.<br>Sign in through Account to run an analysis. Pro includes model validation.</div>', unsafe_allow_html=True)
     st.stop()
 
 if not st.session_state.demo_mode:
@@ -229,9 +239,17 @@ if not st.session_state.demo_mode:
                 r = analyze(r["symbol"], demo=False)
                 st.session_state.research_result = r
                 st.session_state.pop("extra_forecasts", None)
+        except billing.BillingError as exc:
+            st.warning(f"Automatic research refresh paused: {exc}")
         except Exception:
             st.warning("Hourly refresh failed. Showing previous research; check its price date before using it.")
     st.caption("Market data is rechecked after one hour on your next request. Prices are adjusted daily bars, not live intraday quotes. Quote and news polling run every 60 seconds while this page is open. Forecasts use daily history and are not retrained every minute.")
+
+permit = billing.access()
+if r.get("_plan_pro") != permit.pro:
+    st.session_state.research_result = None
+    st.info("Your plan changed. Analyze this stock again to refresh the results.")
+    st.stop()
 
 t, company, model = r["technical"], r["company"], r.get("forecast") or {}
 if r["symbol"] != data.normalize_symbol(entered):
@@ -242,13 +260,13 @@ ui.badge(r["signal"])
 _quote_panel(r["symbol"], st.session_state.demo_mode, company.get("currency"))
 columns = st.columns(4)
 with columns[0]: ui.metric("ADJUSTED CLOSE", ui.fmt(t["price"], "money") if company.get("currency") == "USD" else f"{t['price']:,.2f}", company.get("currency") or "Quote currency unverified")
-with columns[1]: ui.metric("RESEARCH SCORE", f"{r['score']:.0f} / 100", "Technical + company + validated ML")
-with columns[2]: ui.metric("3-MONTH MODEL", ui.fmt(model.get("predicted_return"), "percent"), "Historical estimate, not a target")
+with columns[1]: ui.metric("RESEARCH SCORE", f"{r['score']:.0f} / 100", "Technical + company + validated ML" if permit.pro else "Technical + company")
+with columns[2]: ui.metric("3-MONTH MODEL", ui.fmt(model.get("predicted_return"), "percent") if permit.pro else "🔒 Pro", "Historical estimate, not a target" if permit.pro else "Unlock in the ML forecasts tab")
 with columns[3]: ui.metric("ANNUALIZED VOLATILITY", ui.fmt(t["annualized_volatility"], "ratio"), "Historical daily price variation")
 ui.data_notes([r])
 if r.get("model_error"):
     st.info(r["model_error"])
-overview, forecasts, fundamentals, news_tab = st.tabs(["Overview", "ML forecasts", "Company", "News"])
+overview, forecasts, fundamentals, news_tab = st.tabs(["Overview", "ML forecasts" if permit.pro else "🔒 ML forecasts · Pro", "Company", "News"])
 with overview:
     period_col, average_col = st.columns([3, 1], vertical_alignment="bottom")
     with period_col:
@@ -269,79 +287,83 @@ with overview:
         st.write(f"RSI: {t['rsi']:.1f} · historical maximum drawdown: {ui.fmt(t.get('max_drawdown'), 'ratio')}")
 
 with forecasts:
-    ui.section("02", "Forecast & uncertainty", "3-month horizon")
-    if model.get("training_data_source"):
-        st.caption(f"Prediction input: {model['training_data_source']} · {model['training_price_rows']:,} adjusted daily price rows · {model['training_price_start']} to {model['training_price_end']}.")
-    if model.get("context_notes"):
-        st.caption(" ".join(model["context_notes"]))
-    if not model.get("available"):
-        st.info(model.get("reason", "The ML forecast is unavailable. Technical and company signals remain available."))
+    if not permit.pro:
+        billing.paywall("ML forecasts")
     else:
-        c1,c2,c3 = st.columns(3)
-        with c1: ui.metric("MODEL RETURN", ui.fmt(model["predicted_return"], "percent"), "63 observed trading sessions ahead")
-        with c2: ui.metric("EMPIRICAL 80% RANGE", f"{model['lower_return']:+.0%} to {model['upper_return']:+.0%}", "Not a guaranteed probability band")
-        with c3: ui.metric("MEASURED COVERAGE", ui.fmt(model["interval_coverage"], "ratio"), "Coverage on the separate holdout")
-        st.caption(f"Calibrated on {model['calibration_start']}–{model['calibration_end']}. Tested on {model['holdout_start']}–{model['holdout_end']}. The range is estimated from past forecast errors and can fail under new market conditions.")
-        if model.get("selected_candidate"):
-            used = ", ".join(model.get("context_used", [])) or "none in the displayed estimate"
-            st.caption(f"{model.get('model_version', '')} · Selected approach: {model['selected_candidate']}. Benchmark inputs used: {used}. Features and returns use adjusted daily prices; the live quote does not retrain the model every minute.")
-        if "ml_blend" in model:
-            st.caption(f"Forecast composition: {model['ml_blend']:.0%} ML and {1-model['ml_blend']:.0%} {model['baseline'].lower()}. The mix was selected before final testing. Raw ML estimate: {model['raw_ml_return']:+.1%}; displayed estimate: {model['predicted_return']:+.1%}.")
-            if model["ml_blend"] == 0:
-                st.info("ML did not consistently improve development error. The displayed estimate uses the simple baseline; it is not an ML prediction.")
-        if model.get("data_stale"):
-            st.info("The provider supplied saved stock prices. This forecast has zero weight in the research score until current data is available.")
-        elif model["evidence_weight"] == 0:
-            st.info("No demonstrated error advantage in both validation stages. This forecast has zero weight in the research score.")
-        ui.section("VALIDATION", "What the model actually earned")
-        evaluation = pd.DataFrame([
-            {"Measure":"Mean absolute return error", "Ensemble":f"{model['mae']:.1%}", "Baseline":f"{model['baseline_mae']:.1%}"},
-            {"Measure":"Return error (non-overlapping windows)", "Ensemble":f"{model['nonoverlap_mae']:.1%}", "Baseline":f"{model['nonoverlap_baseline_mae']:.1%}"},
-            {"Measure":"Direction accuracy (overlapping windows)", "Ensemble":f"{model['directional_accuracy']:.1%}", "Baseline":f"{model['always_up_accuracy']:.1%} · always up"},
-            {"Measure":"Direction accuracy (non-overlapping windows)", "Ensemble":f"{model['nonoverlap_accuracy']:.1%}", "Baseline":"Small sample; interpret cautiously"},
-        ])
-        st.dataframe(evaluation, width="stretch", hide_index=True)
-        st.caption(f"Return-error baseline: {model['baseline']}. {model['holdout_rows']} daily forecasts span only {model['independent_windows']} non-overlapping {model['horizon']}-session windows. The holdout sets an evidence gate after model selection; it is not an independent test of the entire gated strategy.")
-        with st.expander("Models, weights & chronological folds"):
-            if model.get("candidate_comparison"):
-                comparison = pd.DataFrame(model["candidate_comparison"])
-                for field in ["Blended MAE", "Raw ML MAE", "ML share"]:
-                    comparison[field] = comparison[field].map(lambda value: f"{value:.1%}")
-                st.dataframe(comparison, hide_index=True, width="stretch")
-                st.caption("Each horizon compares stock-only, market-context, and eligible market-relative models. A more complex approach must lower blended development error by at least 3% and win in two of three periods. All approaches use the same development dates. Selection does not guarantee a better final test result.")
-            if model.get("context_report"):
-                st.dataframe(pd.DataFrame(model["context_report"]), hide_index=True, width="stretch")
-                st.caption("SPY represents the broad market. Sector ETFs use the company's current classification. Missing historical observations are handled inside each training fold. This is not a reconstruction of historical sector membership.")
-            st.dataframe(pd.DataFrame([{"Model":name, "Ensemble weight (%)":round(w*100,1), "Development MAE (%)":round(model['development_errors'][name]*100,2)} for name,w in model['weights'].items()]), hide_index=True, width="stretch")
-            st.dataframe(pd.DataFrame(model["folds"]), hide_index=True, width="stretch")
-            st.caption("Each training block stops a full forecast horizon before the next test block. Model weights use development folds only. Interval tails use the later calibration block. Calibration and final tests refit chronologically using only matured outcomes. The final model is refitted on all labels currently available.")
-            if model["feature_importance"]:
-                st.write("Extra Trees feature importance (global model diagnostic)")
-                st.dataframe(pd.DataFrame(list(model["feature_importance"].items()),columns=["Feature","Importance"]),hide_index=True,width="stretch")
-                st.caption("Importance is an association learned by one model; it is not a causal explanation of this prediction.")
-        with st.expander("Inspect held-out predictions"):
-            predictions = pd.DataFrame(model["holdout_predictions"])
-            st.dataframe(predictions, hide_index=True, width="stretch")
-            ui.download_table(predictions, r["symbol"]+"_holdout.csv", "download_holdout")
-        if st.button("Calculate 1-month, 6-month and 1-year forecasts", width="stretch"):
-            from buyntiq.model import forecast, short_history_forecast
-            with st.spinner("Validating the additional horizons…"):
-                try:
-                    extra_results = {}
-                    for label, days in [("1 month",21),("6 months",126),("1 year",252)]:
-                        extra_model = forecast(r["prices"], days, context=r.get("forecast_context"), demo=r["demo"])
-                        if not extra_model.get("available"):
-                            extra_model = short_history_forecast(r["prices"], days, extra_model.get("reason", "Full model unavailable"), demo=r["demo"])
-                        extra_results[label] = extra_model
-                    st.session_state.extra_forecasts = extra_results
-                except Exception as exc:
-                    st.error(f"Additional forecasts unavailable: {exc}")
-        extra = st.session_state.get("extra_forecasts")
-        if extra:
-            table = []
-            for label,f in {"1 month":extra.get("1 month",{}),"3 months":model,"6 months":extra.get("6 months",{}),"1 year":extra.get("1 year",{})}.items():
-                table.append({"Horizon":label,"Model return":ui.fmt(f.get("predicted_return"),"percent"),"Lower estimate":ui.fmt(f.get("lower_return"),"percent"),"Upper estimate":ui.fmt(f.get("upper_return"),"percent"),"Measured interval coverage":ui.fmt(f.get("interval_coverage"),"ratio"),"Method":f.get("forecast_kind","Not yet calculated")})
-            st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
+        ui.section("02", "Forecast & uncertainty", "3-month horizon")
+        if model.get("training_data_source"):
+            st.caption(f"Prediction input: {model['training_data_source']} · {model['training_price_rows']:,} adjusted daily price rows · {model['training_price_start']} to {model['training_price_end']}.")
+        if model.get("context_notes"):
+            st.caption(" ".join(model["context_notes"]))
+        if not model.get("available"):
+            st.info(model.get("reason", "The ML forecast is unavailable. Technical and company signals remain available."))
+        else:
+            c1,c2,c3 = st.columns(3)
+            with c1: ui.metric("MODEL RETURN", ui.fmt(model["predicted_return"], "percent"), "63 observed trading sessions ahead")
+            with c2: ui.metric("EMPIRICAL 80% RANGE", f"{model['lower_return']:+.0%} to {model['upper_return']:+.0%}", "Not a guaranteed probability band")
+            with c3: ui.metric("MEASURED COVERAGE", ui.fmt(model["interval_coverage"], "ratio"), "Coverage on the separate holdout")
+            st.caption(f"Calibrated on {model['calibration_start']}–{model['calibration_end']}. Tested on {model['holdout_start']}–{model['holdout_end']}. The range is estimated from past forecast errors and can fail under new market conditions.")
+            if model.get("selected_candidate"):
+                used = ", ".join(model.get("context_used", [])) or "none in the displayed estimate"
+                st.caption(f"{model.get('model_version', '')} · Selected approach: {model['selected_candidate']}. Benchmark inputs used: {used}. Features and returns use adjusted daily prices; the live quote does not retrain the model every minute.")
+            if "ml_blend" in model:
+                st.caption(f"Forecast composition: {model['ml_blend']:.0%} ML and {1-model['ml_blend']:.0%} {model['baseline'].lower()}. The mix was selected before final testing. Raw ML estimate: {model['raw_ml_return']:+.1%}; displayed estimate: {model['predicted_return']:+.1%}.")
+                if model["ml_blend"] == 0:
+                    st.info("ML did not consistently improve development error. The displayed estimate uses the simple baseline; it is not an ML prediction.")
+            if model.get("data_stale"):
+                st.info("The provider supplied saved stock prices. This forecast has zero weight in the research score until current data is available.")
+            elif model["evidence_weight"] == 0:
+                st.info("No demonstrated error advantage in both validation stages. This forecast has zero weight in the research score.")
+            ui.section("VALIDATION", "What the model actually earned")
+            evaluation = pd.DataFrame([
+                {"Measure":"Mean absolute return error", "Ensemble":f"{model['mae']:.1%}", "Baseline":f"{model['baseline_mae']:.1%}"},
+                {"Measure":"Return error (non-overlapping windows)", "Ensemble":f"{model['nonoverlap_mae']:.1%}", "Baseline":f"{model['nonoverlap_baseline_mae']:.1%}"},
+                {"Measure":"Direction accuracy (overlapping windows)", "Ensemble":f"{model['directional_accuracy']:.1%}", "Baseline":f"{model['always_up_accuracy']:.1%} · always up"},
+                {"Measure":"Direction accuracy (non-overlapping windows)", "Ensemble":f"{model['nonoverlap_accuracy']:.1%}", "Baseline":"Small sample; interpret cautiously"},
+            ])
+            st.dataframe(evaluation, width="stretch", hide_index=True)
+            st.caption(f"Return-error baseline: {model['baseline']}. {model['holdout_rows']} daily forecasts span only {model['independent_windows']} non-overlapping {model['horizon']}-session windows. The holdout sets an evidence gate after model selection; it is not an independent test of the entire gated strategy.")
+            with st.expander("Models, weights & chronological folds"):
+                if model.get("candidate_comparison"):
+                    comparison = pd.DataFrame(model["candidate_comparison"])
+                    for field in ["Blended MAE", "Raw ML MAE", "ML share"]:
+                        comparison[field] = comparison[field].map(lambda value: f"{value:.1%}")
+                    st.dataframe(comparison, hide_index=True, width="stretch")
+                    st.caption("Each horizon compares stock-only, market-context, and eligible market-relative models. A more complex approach must lower blended development error by at least 3% and win in two of three periods. All approaches use the same development dates. Selection does not guarantee a better final test result.")
+                if model.get("context_report"):
+                    st.dataframe(pd.DataFrame(model["context_report"]), hide_index=True, width="stretch")
+                    st.caption("SPY represents the broad market. Sector ETFs use the company's current classification. Missing historical observations are handled inside each training fold. This is not a reconstruction of historical sector membership.")
+                st.dataframe(pd.DataFrame([{"Model":name, "Ensemble weight (%)":round(w*100,1), "Development MAE (%)":round(model['development_errors'][name]*100,2)} for name,w in model['weights'].items()]), hide_index=True, width="stretch")
+                st.dataframe(pd.DataFrame(model["folds"]), hide_index=True, width="stretch")
+                st.caption("Each training block stops a full forecast horizon before the next test block. Model weights use development folds only. Interval tails use the later calibration block. Calibration and final tests refit chronologically using only matured outcomes. The final model is refitted on all labels currently available.")
+                if model["feature_importance"]:
+                    st.write("Extra Trees feature importance (global model diagnostic)")
+                    st.dataframe(pd.DataFrame(list(model["feature_importance"].items()),columns=["Feature","Importance"]),hide_index=True,width="stretch")
+                    st.caption("Importance is an association learned by one model; it is not a causal explanation of this prediction.")
+            with st.expander("Inspect held-out predictions"):
+                predictions = pd.DataFrame(model["holdout_predictions"])
+                st.dataframe(predictions, hide_index=True, width="stretch")
+                ui.download_table(predictions, r["symbol"]+"_holdout.csv", "download_holdout")
+            if st.button("Calculate 1-month, 6-month and 1-year forecasts", width="stretch"):
+                from buyntiq.model import forecast, short_history_forecast
+                with st.spinner("Validating the additional horizons…"):
+                    try:
+                        with billing.action("forecasts"):
+                            extra_results = {}
+                            for label, days in [("1 month",21),("6 months",126),("1 year",252)]:
+                                extra_model = forecast(r["prices"], days, context=r.get("forecast_context"), demo=r["demo"])
+                                if not extra_model.get("available"):
+                                    extra_model = short_history_forecast(r["prices"], days, extra_model.get("reason", "Full model unavailable"), demo=r["demo"])
+                                extra_results[label] = extra_model
+                            st.session_state.extra_forecasts = extra_results
+                    except Exception as exc:
+                        st.error(f"Additional forecasts unavailable: {exc}")
+            extra = st.session_state.get("extra_forecasts")
+            if extra:
+                table = []
+                for label,f in {"1 month":extra.get("1 month",{}),"3 months":model,"6 months":extra.get("6 months",{}),"1 year":extra.get("1 year",{})}.items():
+                    table.append({"Horizon":label,"Model return":ui.fmt(f.get("predicted_return"),"percent"),"Lower estimate":ui.fmt(f.get("lower_return"),"percent"),"Upper estimate":ui.fmt(f.get("upper_return"),"percent"),"Measured interval coverage":ui.fmt(f.get("interval_coverage"),"ratio"),"Method":f.get("forecast_kind","Not yet calculated")})
+                st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
 
 with fundamentals:
     ui.section("03", "Company fundamentals", f"{company.get('coverage',0)}/6 metrics")

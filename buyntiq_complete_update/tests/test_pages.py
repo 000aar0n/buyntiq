@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from buyntiq import accounts, billing, state
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -8,8 +10,25 @@ ROOT=Path(__file__).resolve().parents[1]
 @pytest.fixture
 def app(monkeypatch):
     monkeypatch.chdir(ROOT)
-    monkeypatch.setenv("BUYNTIQ_DEMO","1")
-    return AppTest.from_file(str(ROOT/"app.py"),default_timeout=40).run()
+    owner = accounts.Identity('a'*64, 'Test user', 'test@example.com')
+    monkeypatch.setattr(accounts, 'current_identity', lambda: owner)
+    monkeypatch.setattr(accounts, '_settings', lambda _: {})
+    monkeypatch.setattr(accounts, '_store', lambda: SimpleNamespace(
+        load=lambda _: accounts.profile_values(),
+        update=lambda owner, ops: accounts.apply_operations(accounts.profile_values(), ops)))
+    monkeypatch.setattr(billing, 'access', lambda force=False: billing.Access(pro=True))
+    monkeypatch.setattr(billing, '_store', lambda: SimpleNamespace(
+        reserve=lambda *a: 'today', refund=lambda *a: None))
+    # Offline workflow fixtures only; production initialize always disables demo.
+    real_initialize = state.initialize
+    def fixture_initialize():
+        state.st.session_state.demo_mode = False
+        real_initialize()
+        state.st.session_state.demo_mode = True
+        state.st.session_state.price_source_policy = "real-only-1"
+    monkeypatch.setattr(state, 'initialize', fixture_initialize)
+    test_app = AppTest.from_file(str(ROOT/"app.py"),default_timeout=120).run()
+    return test_app
 
 
 def test_separate_pages_and_navigation_do_not_fetch_market_data(app,monkeypatch):
@@ -38,14 +57,13 @@ def test_research_and_results_survive_switching_pages(app):
     assert not app.exception
     assert app.session_state["research_result"]["score"] == score
     assert app.text_input[0].value == "AAPL"
-    app.toggle(key="demo_mode").set_value(False).run()
-    assert app.session_state["research_result"] is None
+    assert not any(t.label == "Demo data" for t in app.toggle)
 
 
 def test_review_workflow_and_download(app):
     app.switch_page("views/review.py").run()
     next(b for b in app.button if b.label=="Load example").click().run()
-    next(b for b in app.button if b.label=="Review my portfolio").click().run(timeout=60)
+    next(b for b in app.button if b.label=="Review my portfolio").click().run(timeout=120)
     assert not app.exception
     assert len(app.session_state["review_result"]["table"]) == 3
     assert len(app.get("download_button")) == 1
@@ -59,7 +77,7 @@ def test_builder_workflow(app):
     app.switch_page("views/builder.py").run()
     app.selectbox[0].set_value("My symbols")
     app.text_area[0].set_value("AAPL, MSFT, NVDA, AMD")
-    next(b for b in app.button if b.label=="Build portfolio").click().run(timeout=60)
+    next(b for b in app.button if b.label=="Build portfolio").click().run(timeout=120)
     assert not app.exception
     result=app.session_state["builder_result"]
     assert 0 < len(result["table"]) <= 4

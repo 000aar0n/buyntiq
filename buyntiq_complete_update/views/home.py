@@ -1,6 +1,8 @@
 import streamlit as st
 from buyntiq.ui import section
-from buyntiq import accounts
+from buyntiq import accounts, billing
+
+membership = billing.access()
 
 st.markdown('''<div class="home-hero"><div class="eyebrow">A little more signal. A lot more clarity.</div>
 <h1>Understand the market.<br><span class="muted-title">Build your perspective.</span></h1>
@@ -15,7 +17,15 @@ cards = [
 for col, (number, icon, title, description, page, cta) in zip(st.columns(3, gap="medium"), cards):
     with col, st.container(border=True):
         st.markdown(f'<div class="feature-number">WORKSPACE / {number}</div><div class="feature-icon">{icon}</div><div class="feature-title">{title}</div><div class="feature-description">{description}</div>', unsafe_allow_html=True)
-        st.page_link(page, label=cta + "  →", width="stretch")
+        premium = page in {"views/builder.py", "views/review.py"}
+        if premium and not membership.pro:
+            st.caption("🔒 PRO FEATURE")
+        elif page == "views/research.py" and not membership.pro:
+            st.caption("FREE RESEARCH · 🔒 ML FORECASTS WITH PRO")
+        st.page_link(page, label=cta + "  →", icon="🔒" if premium and not membership.pro else None, width="stretch")
+
+if not membership.pro:
+    st.page_link("views/plans.py", label="Explore Pro — ML forecasts, portfolio tools & exports", icon="🔒", width="stretch")
 
 section("01", "Your watchlist", "Open a research page")
 if st.session_state.watchlist:

@@ -1,13 +1,14 @@
 # Buyntiq
 
-A monochrome stock research workspace with **four separate pages**:
+A monochrome stock research workspace with **five separate pages**:
 
 | Page | Address | Purpose |
 | --- | --- | --- |
 | Home | `/` | Feature shortcuts, saved lists, and recent session work |
 | Stock Research | `/research` | Company analysis, charts, ML validation, and news |
 | Portfolio Builder | `/builder` | Candidate screening, final-score ranking, and allocations |
-| Portfolio Review | `/review` | Enter/import stocks and shares, then inspect value and risk |
+| Portfolio Review | `/review` | Pro: enter/import stocks and shares, then inspect value and risk |
+| Plans | `/plans` | Free/Pro access, monthly or annual checkout, and billing portal |
 
 ## Start on Windows
 
@@ -16,7 +17,7 @@ A monochrome stock research workspace with **four separate pages**:
 3. Double-click **`start_windows.bat`**. The first launch installs dependencies.
 4. Open **http://localhost:8501** if the browser does not open automatically.
 
-For a quick walkthrough, switch **Demo data** on at the top. It uses clearly labeled synthetic prices and financials. Switch it off to request real market data. Demo data is never used as a fallback for a failed real request.
+Sign in to run Free analyses; Pro unlocks portfolio tools and ML without daily application limits. The app uses real market data only. Provider failures never fall back to synthetic data.
 
 ## Start with commands (macOS, Linux, or an existing environment)
 
@@ -36,7 +37,16 @@ python -m streamlit run app.py
 
 On Streamlit Community Cloud, use branch **`master`** and entry point **`buyntiq_complete_update/app.py`** for this repository. Use Python 3.12 and reboot after dependency updates if needed. For the account update, follow the exact file map in **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)**; upload into existing folders and keep the rest of the repository in place.
 
-Google login requires credentials in Streamlit Secrets. Saved account lists require the PostgreSQL table in `account_schema.sql` and its private database connection. **[ACCOUNT_SETUP.md](ACCOUNT_SETUP.md)** explains the Google and Supabase setup. Guest browsing remains available before configuring accounts. Yahoo requests use yfinance without an API key.
+Use **[SUBSCRIPTION_SETUP.md](SUBSCRIPTION_SETUP.md)** for Free/Pro setup. Email-code login uses Supabase Auth; existing configured Google login remains supported. Saved lists and account-based daily limits require `account_schema.sql`, `billing_schema.sql` and the private PostgreSQL connection. Stripe Checkout accepts the monthly `price_id` or yearly `annual_price_id` from Streamlit Secrets. Both give the same Pro access. Secret keys and database passwords belong only in Streamlit settings.
+
+| Access | Daily allowance |
+| --- | --- |
+| Free | 5 basic stock analyses, charts, company data/news, saved lists |
+| Pro monthly or annual | Unlimited stock analyses with ML, portfolio builds, reviews and forecast bundles; CSV exports |
+
+Limits reset at midnight UTC. All calculations require a verified login. Pro is verified directly with Stripe before each paid calculation, including Demo mode. Canceling at period end keeps access through the paid period. The Plans page supports payment-method management and cancellation through Stripe's portal.
+
+Guest navigation and session watchlist editing remain available before accounts are configured. Yahoo requests use yfinance without an API key.
 
 If the app is nested inside your repository, also copy `.streamlit/config.toml` to the **repository root's** `.streamlit` folder so Community Cloud loads the theme.
 
@@ -48,13 +58,13 @@ If the app is nested inside your repository, also copy `.streamlit/config.toml` 
 - Market requests begin only after an action. Ten-year daily prices and company data cache for one hour; content-keyed ML results cache for six hours. News/quote polling runs on the open research page, and additional forecast horizons load on request.
 - Bounded data-request concurrency, provider timeouts, short failure caches, and labeled stale data instead of repeated full retries.
 - Ridge, Extra Trees, and Gradient Boosting candidates with separate development, calibration, and holdout periods.
-- Research scores in all three tools use the same formula. Forecasts that fail the baseline gate have **zero ML score weight**.
+- Pro research and both portfolio tools use the same score formula; Free research omits ML. Forecasts that fail the baseline gate have **zero ML score weight**.
 - Highest scores selects the highest **final** research scores among fully analyzed finalists. Diversified selection is explicit and its penalties are documented in the app.
 - Fractional holdings, duplicate-symbol merging, CSV import/export, sector weights, concentration, correlations, and shrunk covariance risk estimates.
 
 ## How to use the builder
 
-The starter list contains 62 named stocks across 11 sectors. It is a convenient research universe, not a complete market index. Custom symbols support up to 100 names. The live US directory option screens a disclosed sample of up to 500 symbols; it does not claim to analyze every listed stock.
+The starter list contains 62 named stocks across 11 sectors. It is a convenient research universe, not a complete market index. Custom symbols support up to 100 names. The live US directory supports an entire-directory technical scan or a smaller selected limit. Full company and ML analysis applies only to the chosen finalists.
 
 The first pass ranks technical scores. The requested number of finalists receives full company and ML analysis. **Highest scores ranks that finalist pool**, not stocks that were never fully analyzed. Increase the finalist count to broaden the comparison; it takes longer. The risk profile changes weights and caps, while selection mode controls which stocks are chosen.
 
@@ -72,7 +82,7 @@ See **`MODEL_CARD.md`** for the exact training boundaries, score formula, and li
 - Quotes use adjusted daily history, not a live execution feed. A cached response has a displayed price date. Fallback data is explicitly marked stale.
 - Portfolio calculations accept confirmed USD quotes. A company's financial reporting currency is tracked separately.
 - Missing data is not fabricated. Unpriced/unverified positions are excluded and disclosed; coverage by value cannot be known for unpriced holdings.
-- Signed-in watchlists and recent searches persist in a private database under the verified Google account key. Guest lists and portfolio holdings/results stay in the current session. Download CSVs to retain portfolio results. Public market data and model outputs are the only disk-cached content.
+- Signed-in watchlists and recent searches persist in a private database under a verified provider/account key. Guest lists and portfolio holdings/results stay in the current session. Download CSVs to retain portfolio results. Public market data and model outputs are the only disk-cached content.
 - There is no brokerage connection, order execution, scheduled training, or external LLM call.
 
 ## Tests
@@ -87,7 +97,8 @@ Tests cover causal features, label-boundary gaps, score gating, allocation math,
 ## Project layout
 
 - `app.py`: page routing and shared frame
-- `buyntiq/accounts.py`, `account_schema.sql`: Google identity and private saved lists
+- `buyntiq/accounts.py`, `email_auth.py`, `account_schema.sql`: verified identity and private saved lists
+- `buyntiq/billing.py`, `billing_schema.sql`: Stripe subscription checks and per-account quotas
 - `views/`: one Python file per page
 - `buyntiq/data.py`, `cache.py`: market sources and cache
 - `buyntiq/features.py`, `model.py`: causal features and validated ensemble

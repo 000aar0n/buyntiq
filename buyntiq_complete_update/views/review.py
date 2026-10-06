@@ -1,10 +1,11 @@
 import hashlib
 import streamlit as st
 import pandas as pd
-from buyntiq import ui
+from buyntiq import billing, ui
 from buyntiq.portfolio import normalize_entries, review
 
 ui.header("03 / Portfolio review", "See what you really hold.", "Add stocks and share counts to inspect research quality, concentration, and historical risk.")
+billing.require_pro("Portfolio review")
 
 def reset_editor(rows):
     st.session_state.review_rows = rows
@@ -45,10 +46,11 @@ st.session_state.review_rows = entries.to_dict("records")
 if st.button("Review my portfolio",type="primary",width="stretch"):
     bar = st.progress(0.,text="Preparing your holdings")
     try:
-        holdings = normalize_entries(entries)
-        result = review(holdings,demo=st.session_state.demo_mode,progress=lambda fraction,message:bar.progress(fraction,text=message))
-        result["input_holdings"] = holdings
-        st.session_state.review_result = result
+        with billing.action("review"):
+            holdings = normalize_entries(entries)
+            result = review(holdings,demo=st.session_state.demo_mode,progress=lambda fraction,message:bar.progress(fraction,text=message))
+            result["input_holdings"] = holdings
+            st.session_state.review_result = result
     except Exception as exc:
         st.error(str(exc))
     finally:

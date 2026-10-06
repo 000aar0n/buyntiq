@@ -1,7 +1,7 @@
-"""Google identity plus private, per-account watchlists and recent searches.
+"""Verified Google or Supabase identity plus private saved lists.
 
-Streamlit/Authlib performs OIDC validation. Only st.user supplies the owner.
-Credentials stay in Streamlit secrets; no passwords or OAuth tokens are stored.
+Streamlit/Authlib verifies Google; Supabase verifies email-code sessions.
+Credentials stay in Streamlit secrets. Supabase tokens stay in server sessions.
 """
 import hashlib
 import time
@@ -36,7 +36,9 @@ def google_identity(user):
 
 
 def current_identity():
-    return google_identity(dict(st.user))
+    from buyntiq import email_auth
+    claims = email_auth.identity_claims()
+    return Identity(**claims) if claims else google_identity(dict(st.user))
 
 
 def _settings(section):
@@ -180,9 +182,12 @@ def sync_session(force=False):
     if previous is not None and previous != owner:
         # Clear prior holdings, analyses, pending writes and widget drafts on
         # account changes. Never carry one account's pending writes to another.
+        email_session = st.session_state.get("_email_auth")
         st.session_state.clear()
         from buyntiq.state import initialize
         initialize()
+        if email_session:
+            st.session_state._email_auth = email_session
     st.session_state._account_owner = owner
     st.session_state.setdefault("_account_pending", [])
     st.session_state.setdefault("_account_last_attempt", 0.)
@@ -242,8 +247,12 @@ def storage_caption():
 
 
 def _logout():
-    st.session_state.clear()
-    st.logout()
+    if st.session_state.get("_email_auth"):
+        from buyntiq import email_auth
+        email_auth.logout()
+    else:
+        st.session_state.clear()
+        st.logout()
 
 
 def render_account_menu():
@@ -283,10 +292,13 @@ def render_account_menu():
                 st.button("Retry sync", on_click=sync_session, kwargs={"force": True}, width="stretch")
             else:
                 st.caption("Your lists follow you across devices.")
+            from buyntiq import billing
+            st.caption("Buyntiq Pro" if billing.access().pro else "Buyntiq Free")
+            st.page_link("views/plans.py", label="Plans & subscription")
             st.button("Log out", on_click=_logout, width="stretch")
         else:
             st.write("Keep your watchlist and recent searches when you return.")
-            ready = login_ready()
-            st.button("Sign in with Google", on_click=_login, disabled=not ready, width="stretch")
-            if not ready:
-                st.caption("Google sign-in setup is incomplete. You can continue browsing as a guest.")
+            from buyntiq import email_auth
+            email_auth.render()
+            if login_ready():
+                st.button("Sign in with Google", on_click=_login, width="stretch")

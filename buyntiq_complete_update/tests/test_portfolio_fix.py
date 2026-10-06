@@ -17,13 +17,13 @@ def test_directory_sector_is_preserved(monkeypatch):
 def test_short_history_ml_and_statistical_fallback():
     frame = data.demo_prices('MSFT')
     for n, method in [(63, 'Statistical'), (400, 'Short-history ML')]:
-        result = short_history_forecast(frame.tail(n))
+        result = short_history_forecast(frame.tail(n), demo=True)
         assert result['forecast_kind'].startswith(method)
         assert np.isfinite(result['predicted_return'])
         assert result['evidence_weight'] == 0
         assert result['estimated_price'] == pytest.approx(frame.Close.iloc[-1]*(1+result['predicted_return']))
     # Changing unknown future rows cannot enter the supplied training sample.
-    assert short_history_forecast(frame.tail(400))['training_rows'] == 400-21-63
+    assert short_history_forecast(frame.tail(400), demo=True)['training_rows'] == 400-21-63
 
 
 def test_analysis_fills_forecast_without_granting_ml_score():
@@ -49,7 +49,7 @@ def test_positive_filter_and_cash_projection():
     for v in [-.2, 0, None, float('nan'), float('inf')]:
         assert not positive_forecast({'forecast': {'predicted_return':v}})
     assert positive_forecast({'forecast': {'predicted_return':.01}})
-    t = pd.DataFrame({'Weight':[.5,.5], 'Price':[300.,200.], 'Whole shares':[1,2], 'ML forecast':[.1,.2]})
+    t = pd.DataFrame({'Weight':[.5,.5], 'Price':[300.,200.], 'Shares':[1,2], 'ML forecast':[.1,.2]})
     whole = projected_portfolio(t,1000,True)
     assert whole['gain'] == pytest.approx(110)
     assert whole['return'] == pytest.approx(.11)
@@ -121,5 +121,6 @@ def test_full_scan_crosses_old_100_stock_limit(monkeypatch):
     result = build(symbols,count=3,finalists=6)
     assert seen == symbols
     assert result['screened'] == 137
-    assert result['analyzed'] == 6
+    # The current builder fully analyzes at least 30 finalists when available.
+    assert result['analyzed'] == 30
     assert result['universe_count'] == 137

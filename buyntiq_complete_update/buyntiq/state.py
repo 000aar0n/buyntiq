@@ -3,13 +3,12 @@ import streamlit as st
 
 
 def initialize():
-    # A new deployment/session starts on actual Yahoo data, even if an older
-    # environment flag or session selected synthetic examples. Demo still
-    # requires an explicit user toggle after initialization.
-    if st.session_state.get("price_source_policy") != "yahoo-6.0.1":
-        st.session_state.demo_mode = False
+    # Live app sessions always use real market data, including old demo sessions.
+    if (st.session_state.get("price_source_policy") != "real-only-1"
+            or st.session_state.get("demo_mode", False)):
         change_mode()
-        st.session_state.price_source_policy = "yahoo-6.0.1"
+    st.session_state.demo_mode = False
+    st.session_state.price_source_policy = "real-only-1"
     defaults = {"demo_mode": False,
                 "watchlist": ["AAPL", "MSFT", "NVDA", "AMD", "META"],
                 "recent_searches": [],

@@ -4,7 +4,7 @@ import streamlit as st
 
 from buyntiq.state import initialize, change_mode
 from buyntiq.ui import ASSETS, styles
-from buyntiq import accounts
+from buyntiq import accounts, billing
 
 
 # =========================================================
@@ -30,6 +30,7 @@ initialize()
 
 # Restore/sync the signed-in user's account state before any page widgets render.
 accounts.sync_session()
+membership = billing.sync_access()
 
 # Existing Buyntiq black / monochrome UI.
 styles()
@@ -97,6 +98,7 @@ pages = [
         title="Portfolio review",
         url_path="review",
     ),
+    st.Page("views/plans.py", title="Plans", url_path="plans"),
 ]
 
 current = st.navigation(
@@ -109,11 +111,11 @@ current = st.navigation(
 # TOP HEADER
 # =========================================================
 # Same layout as the account-enabled Buyntiq build:
-# Buyntiq brand | Account | Demo data
+# Buyntiq brand | Account
 # =========================================================
 
-brand, account, settings = st.columns(
-    [4, 1.25, 1],
+brand, account = st.columns(
+    [5, 1.25],
     vertical_alignment="center",
 )
 
@@ -135,44 +137,21 @@ with account:
     # buyntiq/accounts.py so app.py does not duplicate auth logic.
     accounts.render_account_menu()
 
-with settings:
-    # This widget lives in the entrypoint so its state survives page switches.
-    st.toggle(
-        "Demo data",
-        key="demo_mode",
-        on_change=change_mode,
-        help="Use generated prices and company metrics. No real market data.",
-    )
-
-
 # =========================================================
 # CUSTOM NAVIGATION
 # =========================================================
 
 with st.container(key="navigation"):
-    nav = st.columns(4)
+    nav = st.columns(len(pages))
 
     for col, page in zip(nav, pages):
         with col:
             st.page_link(
                 page,
                 label=page.title,
+                icon="🔒" if not membership.pro and page.title in {"Portfolio builder", "Portfolio review"} else None,
                 width="stretch",
             )
-
-
-# =========================================================
-# DEMO MODE NOTICE
-# =========================================================
-
-if st.session_state.demo_mode:
-    st.markdown(
-        '<div class="demo-notice">'
-        '<strong>DEMO MODE</strong>'
-        '<span>Prices, financials, forecasts, and results use synthetic data.</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
 
 
 # =========================================================
