@@ -35,15 +35,17 @@ Supabase documentation:
 - https://supabase.com/docs/guides/auth/auth-email-passwordless
 - https://supabase.com/docs/guides/auth/auth-smtp
 
-## 3. Stripe sandbox prices
+## 3. Stripe live prices
 
-Open https://dashboard.stripe.com and select a testing environment (Sandbox/Test mode).
+Open https://dashboard.stripe.com and switch to your **live** Stripe environment.
 
-1. Product catalog → Add product: name it **Buyntiq Pro**.
-2. Add two recurring prices: **monthly** and **yearly**, both **USD**, flat amount, quantity 1. Enter the total annual amount for the yearly option. Do not configure a trial or metered pricing.
-3. Your supplied sandbox prices are monthly `price_1UNbQDGnhPJ6YaUQwD9TSsoM` and annual `price_1UNbRHGnhPJ6YaUQIhk0cHY9`. Use both with the secret key from that same sandbox. A product ID (`prod_...`) will not work.
-4. Developers / API keys: copy the **test secret key** (`sk_test_...`). Keep it private.
-5. Settings → Billing → Customer portal: activate/configure the portal for that same testing environment. Allow payment-method updates, invoice access and cancellation **at the end of the billing period**. Leave plan switching off; this app has one paid tier.
+1. Product catalog → Add/open **Buyntiq Pro**.
+2. Create two live recurring prices: **monthly** and **yearly**, both **USD**, flat amount, quantity 1. Enter the total annual amount for the yearly option. Do not configure a trial or metered pricing.
+3. Copy the two live Price IDs (`price_...`). Use Price IDs, not a Product ID (`prod_...`).
+4. Developers / API keys: copy the **live secret key** (`sk_live_...`, or a live restricted key with the required billing permissions). Keep it private.
+5. Settings → Billing → Customer portal: activate/configure the portal for the **live** environment. Allow payment-method updates, invoice access and cancellation **at the end of the billing period**. Leave plan switching off; this app has one paid tier.
+
+The secret key and both Price IDs must all come from the same Stripe account and the same live mode. Never commit the secret key to GitHub.
 
 The app uses Stripe Checkout and the billing portal. No webhook endpoint or extra server is required: each paid calculation verifies its customer's subscriptions directly with Stripe. Display status may be cached for 30 seconds; Refresh subscription forces a new check. Payment-return query parameters cannot grant access.
 
@@ -60,9 +62,9 @@ url = "https://YOUR_PROJECT_REF.supabase.co"
 publishable_key = "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY"
 
 [stripe]
-secret_key = "YOUR_STRIPE_TEST_SECRET_KEY"
-price_id = "price_1UNbQDGnhPJ6YaUQwD9TSsoM"
-annual_price_id = "price_1UNbRHGnhPJ6YaUQIhk0cHY9"
+secret_key = "YOUR_STRIPE_LIVE_SECRET_KEY"
+price_id = "YOUR_STRIPE_LIVE_MONTHLY_PRICE_ID"
+annual_price_id = "YOUR_STRIPE_LIVE_ANNUAL_PRICE_ID"
 site_url = "https://buyntiq.streamlit.app"
 ```
 
@@ -83,26 +85,24 @@ Use branch **master**, with Streamlit entry point **buyntiq_complete_update/app.
 
 Run both SQL scripts before using accounts/checkout. Existing secrets can stay: the monthly key remains `price_id`, and the annual key is `annual_price_id`. Missing annual configuration leaves monthly checkout available. Selecting Annual validates that its Stripe Price really recurs once per year. Changing the selector does not change an already active subscription; use Manage subscription, with portal plan switching disabled for this release.
 
-## 6. Test before accepting money
+## 6. Verify live billing before launch
 
-1. Reboot the Streamlit app after secrets and files are saved.
-2. Account → enter your email → request code → verify it.
-3. Save a watchlist. Log out and back in using the same method; confirm it returns.
-4. As Free, run a basic analysis. Confirm ML, builder and review are locked. Free requires the database migration even if Stripe is not configured yet.
-5. Plans must show **TEST MODE**, Monthly/Annual choices, the matching amount and the Subscribe button.
-6. Click Subscribe → Continue to secure Stripe checkout. Use Stripe's test card `4242 4242 4242 4242`, any future expiry and any three-digit CVC **only in test mode**.
-7. Keep the original app tab open. After checkout, return to it and click Refresh subscription. Verify Pro and run a small portfolio calculation.
-8. Log in as a different user; confirm that account stays Free and does not see your saved lists/results.
-9. Manage subscription / cancel → billing portal. Cancel at period end: Pro should remain through the paid period. In the Stripe test dashboard, cancel immediately to verify access is removed. Failed/past-due payments must not grant Pro. A Stripe/network outage blocks new paid work until verification succeeds.
-10. Retry Subscribe twice before paying; it should reuse the pending Checkout session. Switch to Annual before paying: the old monthly link should disappear, and preparing annual checkout expires the old open session. Test annual with a different test account; both periods must unlock Pro. After subscribing, a second subscription must be blocked.
+1. Reboot the Streamlit app after saving Streamlit Secrets.
+2. Account → sign in, then open Plans.
+3. Confirm Plans shows **LIVE BILLING** and the exact live monthly/annual amounts you expect.
+4. Click Prepare secure checkout, then open Stripe Checkout. Confirm Stripe is in live mode and the amount/interval are correct. Do **not** use Stripe test-card numbers in live mode.
+5. If you intentionally make a real purchase for an end-to-end check, return to Buyntiq and click Refresh subscription; Pro should unlock only after Stripe reports an active paid subscription.
+6. Open Manage subscription / cancel and confirm the live billing portal works.
+7. Sign in as a different account and confirm it remains Free.
+8. After any deliberate live test purchase, cancel/refund it in Stripe as appropriate. A refund alone does not cancel an active subscription.
 
 Refunds alone do not cancel a Stripe subscription. If you intend to revoke access after a refund, cancel the subscription too. Paused collection and trialing subscriptions do not grant Pro. No tax calculation, discount codes, trial or proration-based plan changes are configured by this patch.
 
-## 7. Switch to real billing
+## 7. Switching back to a Stripe sandbox
 
-Only after the test flow passes: activate your live Stripe account, create live monthly and annual product prices, configure the live customer portal, and replace the test secret key and both test price IDs with their **live** equivalents. Test payments never become live subscriptions. Confirm the TEST MODE banner disappears and the correct price appears.
+If you want to test future billing changes without real charges, temporarily use a Stripe sandbox/test secret key together with sandbox/test Price IDs. The app detects the key mode automatically and shows **TEST MODE**. Never mix a live key with test Price IDs or a test key with live Price IDs.
 
-This implementation does not itself provision Stripe, SMTP, Supabase or live billing. Real email delivery, hosted database access and a full Stripe test purchase must be verified in your deployment.
+This implementation does not itself provision Stripe, SMTP, Supabase or live billing. Real email delivery and hosted database access still need to be verified in your deployment.
 
 If you later change price IDs, include old paid prices in `[stripe] additional_pro_price_ids = ["price_OLD"]` so existing subscribers keep access. Keep the original Stripe account and database customer mappings. Do not change identity-key logic after taking payments without migrating those mappings.
 
