@@ -234,7 +234,6 @@ class BillingStore:
             payload = {"mode": "subscription", "customer": customer,
                        "client_reference_id": identity.key,
                        "line_items[0][price]": price_id, "line_items[0][quantity]": 1,
-                       "payment_method_types[0]": "card",
                        "subscription_data[metadata][buyntiq_owner]": identity.key,
                        "success_url": settings["site"] + "/plans?checkout=returned",
                        "cancel_url": settings["site"] + "/plans?checkout=canceled"}
