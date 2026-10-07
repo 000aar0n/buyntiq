@@ -56,7 +56,9 @@ cycle = st.segmented_control(
 )
 cycle = cycle or cycles[0]
 
-if not settings["live"]:
+if settings["live"]:
+    st.success("LIVE BILLING — Stripe Checkout is accepting real payments.")
+else:
     st.warning("TEST MODE — Stripe will only accept test payments. No real charge will be made.")
 
 returned = st.query_params.get("checkout")
