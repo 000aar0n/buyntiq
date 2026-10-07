@@ -229,8 +229,13 @@ class BillingStore:
                     if any(i.get("price", {}).get("id") == price_id for i in items.get("data", [])):
                         return _safe_url(session.get("url"), "checkout.stripe.com")
                     _stripe("POST", "checkout/sessions/" + previous + "/expire")
-            # Stable after a timeout/rollback; changed only after a prior session is stored.
-            key = hashlib.sha256((customer + price_id + (previous or "first")).encode()).hexdigest()
+            # Stable for retries of the same checkout payload, but versioned so
+            # deliberate payload changes never collide with Stripe's stored
+            # idempotency record from an older Buyntiq release.
+            checkout_request_version = "standard-checkout-v2"
+            key = hashlib.sha256(
+                (checkout_request_version + "|" + customer + "|" + price_id + "|" + (previous or "first")).encode()
+            ).hexdigest()
             payload = {"mode": "subscription", "customer": customer,
                        "client_reference_id": identity.key,
                        "line_items[0][price]": price_id, "line_items[0][quantity]": 1,
