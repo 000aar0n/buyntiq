@@ -229,13 +229,6 @@ class BillingStore:
                     if any(i.get("price", {}).get("id") == price_id for i in items.get("data", [])):
                         return _safe_url(session.get("url"), "checkout.stripe.com")
                     _stripe("POST", "checkout/sessions/" + previous + "/expire")
-            # Stable for retries of the same checkout payload, but versioned so
-            # deliberate payload changes never collide with Stripe's stored
-            # idempotency record from an older Buyntiq release.
-            checkout_request_version = "standard-checkout-v2"
-            key = hashlib.sha256(
-                (checkout_request_version + "|" + customer + "|" + price_id + "|" + (previous or "first")).encode()
-            ).hexdigest()
             payload = {"mode": "subscription", "customer": customer,
                        "client_reference_id": identity.key,
                        "line_items[0][price]": price_id, "line_items[0][quantity]": 1,
@@ -247,6 +240,17 @@ class BillingStore:
                        "subscription_data[metadata][buyntiq_owner]": identity.key,
                        "success_url": settings["site"] + "/plans?checkout=returned",
                        "cancel_url": settings["site"] + "/plans?checkout=canceled"}
+            # Stripe requires an idempotency key to be reused only with the
+            # exact same parameters. Fingerprint the real Checkout payload so
+            # retries are safe while any parameter change automatically gets
+            # a fresh key. Include the previous session id so replacing an
+            # expired/open session can create a genuinely new Checkout Session.
+            payload_fingerprint = "\n".join(
+                f"{name}={payload[name]}" for name in sorted(payload)
+            )
+            key = hashlib.sha256(
+                ("checkout-payload-v1|" + (previous or "first") + "|" + payload_fingerprint).encode()
+            ).hexdigest()
             session = _stripe("POST", "checkout/sessions", payload, idempotency="buyntiq-checkout-" + key)
             url = _safe_url(session.get("url"), "checkout.stripe.com")
             connection.execute("UPDATE buyntiq_private.billing_customers SET checkout_session_id=%s WHERE owner_key=%s AND livemode=%s", (session["id"], identity.key, settings["live"]))
