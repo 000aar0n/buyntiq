@@ -183,7 +183,7 @@ def _quote_panel(symbol, demo, currency):
 
 ui.header("01 / Stock research", "Look beneath the ticker.", "Price action, company quality, and an ML forecast you can inspect.")
 plan = billing.access()
-st.caption(f"{'Pro' if plan.pro else 'Free'} · {billing.limit_for('research', plan.pro)} stock analyses per day. Pro includes ML forecasts. Sign in through Account to run an analysis.")
+st.caption("Payments are temporarily disabled · full stock research and ML forecasts are available.")
 left, right = st.columns([4, 1], vertical_alignment="bottom")
 with left:
     entered = persistent_widget(st.text_input, "research_symbol", label="US-listed stock ticker", placeholder="AAPL", max_chars=12)
@@ -210,7 +210,7 @@ if st.session_state.recent_searches:
 
 if clicked:
     with st.status("Researching your stock…", expanded=True) as status:
-        st.write("Loading prices and company data. Pro analyses also validate the 3-month ensemble.")
+        st.write("Loading prices and company data, then validating the 3-month ensemble.")
         try:
             result = analyze(entered, demo=st.session_state.demo_mode)
             st.session_state.research_result = result
@@ -225,7 +225,7 @@ if clicked:
 
 r = st.session_state.research_result
 if not r:
-    st.markdown('<div class="empty-state"><h3>Start with a company you know.</h3>Enter a ticker above, then select Analyze stock.<br>Sign in through Account to run an analysis. Pro includes model validation.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="empty-state"><h3>Start with a company you know.</h3>Enter a ticker above, then select Analyze stock.<br>Full model validation is currently available without a paid plan.</div>', unsafe_allow_html=True)
     st.stop()
 
 if not st.session_state.demo_mode:
