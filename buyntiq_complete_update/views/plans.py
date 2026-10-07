@@ -3,91 +3,166 @@ from datetime import datetime, timezone
 import streamlit as st
 from buyntiq import accounts, billing, ui
 
-ui.header("04 / Membership", "Your research, your pace.", "Start free. Upgrade for forecasts and portfolio tools.")
+ui.header(
+    "04 / Membership",
+    "Buyntiq Pro",
+    "Choose a plan, open Stripe's secure checkout, and come straight back to Buyntiq.",
+)
+
 settings = billing.config()
 identity = accounts.current_identity()
-cycles = list(settings.get("options", {"monthly": None, "annual": None}))
-cycle = st.radio("Billing period", cycles, format_func=lambda value: value.title(),
-                 horizontal=True, key="subscription_cycle")
-if settings and not settings["live"]:
-    st.warning("TEST MODE — this checkout uses Stripe test payments, not real charges.")
-if st.query_params.get("checkout") == "returned":
-    st.info("Back from checkout? Sign in with the same account, then select Refresh subscription. A return link alone does not confirm payment.")
-left, right = st.columns(2)
-with left, st.container(border=True):
-    st.subheader("Free")
-    st.write("**$0**")
-    st.write(f"• {billing.limit_for('research', False)} stock analyses per day\n• Price charts, company data and news\n• Saved watchlist and recent searches")
-    st.caption("A free account is required to run analyses.")
-with right, st.container(border=True):
-    st.subheader("Pro")
-    ready = False
-    try:
-        price = billing.price_details(cycle)
-        period = billing.CYCLES[cycle]
-        st.write(f"**${price['unit_amount']/100:,.2f} USD / {period}**")
-        if cycle == "annual":
-            st.caption(f"Billed once per year. Equivalent to ${price['unit_amount']/1200:,.2f} per month.")
-        st.caption("Unlimited Pro usage with either billing period.")
-        ready = True
-    except billing.BillingError as exc:
-        st.caption(str(exc))
-    st.write("• Unlimited stock analyses with ML forecasts\n• Unlimited portfolio builds and reviews\n• Unlimited additional forecast bundles\n• Forecast and portfolio CSV exports")
-    st.caption(f"Renews {'annually' if cycle == 'annual' else 'monthly'} until canceled. Manage cancellation through the billing portal. Estimates are uncertain; Pro does not guarantee better returns.")
 
-if not identity:
-    st.info("Open Account above to sign in or create your free account before subscribing.")
+if not settings:
+    st.error("Billing is not configured yet. Check the [stripe] section in Streamlit Secrets.")
     st.stop()
 
-if st.button("Refresh subscription"):
+cycles = list(settings.get("options", {"monthly": None}))
+cycle = st.segmented_control(
+    "Billing period",
+    cycles,
+    default=cycles[0],
+    format_func=lambda value: "Monthly" if value == "monthly" else "Annual",
+    key="subscription_cycle",
+)
+cycle = cycle or cycles[0]
+
+if not settings["live"]:
+    st.warning("TEST MODE — Stripe will only accept test payments. No real charge will be made.")
+
+returned = st.query_params.get("checkout")
+if returned == "returned":
+    st.success("Payment flow returned to Buyntiq. Refresh your subscription below to confirm Pro.")
+elif returned == "canceled":
+    st.info("Checkout was canceled. Nothing was charged.")
+
+try:
+    price = billing.price_details(cycle)
+    ready = True
+except billing.BillingError as exc:
+    price = None
+    ready = False
+    st.error(str(exc))
+
+free_col, pro_col = st.columns(2)
+
+with free_col:
+    with st.container(border=True):
+        st.subheader("Free")
+        st.markdown("### $0")
+        st.write(
+            f"• {billing.limit_for('research', False)} stock analyses per day\n"
+            "• Price charts, company data and news\n"
+            "• Saved watchlist and recent searches"
+        )
+
+with pro_col:
+    with st.container(border=True):
+        st.subheader("Pro")
+        if price:
+            period = billing.CYCLES[cycle]
+            st.markdown(f"### ${price['unit_amount']/100:,.2f} / {period}")
+            if cycle == "annual":
+                st.caption(f"${price['unit_amount']/1200:,.2f}/month equivalent, billed yearly")
+        else:
+            st.markdown("### Unavailable")
+        st.write(
+            "• Unlimited stock analyses with ML forecasts\n"
+            "• Unlimited portfolio builds and reviews\n"
+            "• Forecast and portfolio CSV exports"
+        )
+
+if not identity:
+    st.info("Sign in from **Account** above, then come back here to subscribe.")
+    st.stop()
+
+if st.button("Refresh subscription", width="stretch"):
     billing.access(force=True)
     billing.sync_access()
     st.rerun()
+
 access = billing.access()
+
 if not access.verified:
     st.warning(access.message)
 elif access.status == "owner":
-    st.success("Owner Pro is active — all Pro features, no subscription required.")
-    st.caption("No daily application limits apply.")
+    st.success("Owner Pro is active — all Pro features are unlocked.")
 elif access.pro:
     end = datetime.fromtimestamp(access.expires_at, timezone.utc).strftime("%B %d, %Y")
-    st.success(f"Buyntiq Pro is active. Current paid period ends {end} (UTC).")
+    st.success(f"Buyntiq Pro is active through {end} (UTC).")
 else:
-    st.write("Your current plan: **Free**")
+    st.caption("Current plan: Free")
 
-if ready and not access.pro and st.button("Subscribe to Pro", type="primary"):
-    try:
-        # The link belongs to this account, environment and selected billing period.
-        url = billing.start_checkout(cycle)
-        st.session_state._checkout_link = (identity.key, settings["live"], price["id"], url)
-    except billing.BillingError as exc:
-        st.error(str(exc))
+# Drop stale links when the user, Stripe mode, or selected price changes.
 link = st.session_state.get("_checkout_link")
-if (ready and link and len(link) == 4 and link[:3] == (identity.key, settings["live"], price["id"])
-        and not access.pro):
-    st.link_button("Continue to secure Stripe checkout", link[3], type="primary")
-    st.caption("Keep this app tab open. After payment, return here and select Refresh subscription. A new app tab may require another sign-in code.")
+expected = (identity.key, settings["live"], price["id"]) if ready else None
+if link and (len(link) != 4 or link[:3] != expected):
+    st.session_state.pop("_checkout_link", None)
+    link = None
+
+if ready and not access.pro:
+    st.divider()
+    st.subheader("Upgrade to Pro")
+    st.caption("Buyntiq creates a private Stripe Checkout session for this account. Card details never pass through Buyntiq.")
+
+    if st.button("Prepare secure checkout", type="primary", width="stretch"):
+        try:
+            with st.spinner("Creating your secure Stripe checkout…"):
+                url = billing.start_checkout(cycle)
+            st.session_state._checkout_link = (
+                identity.key,
+                settings["live"],
+                price["id"],
+                url,
+            )
+            st.rerun()
+        except billing.BillingError as exc:
+            st.error(str(exc))
+
+    link = st.session_state.get("_checkout_link")
+    if link and len(link) == 4 and link[:3] == expected:
+        st.success("Checkout is ready.")
+        st.link_button(
+            "Open secure Stripe checkout ↗",
+            link[3],
+            type="primary",
+            width="stretch",
+        )
+        st.caption("After payment, Stripe returns you here. Click Refresh subscription to unlock Pro.")
+
 if access.pro and access.status != "owner":
-    st.caption("Already subscribed? Use the billing portal below. Choosing a different period here does not change your existing subscription.")
-if settings and access.status != "owner" and st.button("Manage subscription / cancel"):
+    st.divider()
+    st.subheader("Subscription")
+    st.caption("Update payment details or cancel your subscription in Stripe's billing portal.")
+
+if settings and access.status != "owner" and st.button(
+    "Manage subscription / cancel",
+    width="stretch",
+    disabled=not access.pro,
+):
     try:
         st.session_state._portal_link = (identity.key, billing.start_portal())
     except billing.BillingError as exc:
         st.error(str(exc))
-link = st.session_state.get("_portal_link")
-if link and link[0] == identity.key:
-    st.link_button("Open Stripe billing portal", link[1])
+
+portal = st.session_state.get("_portal_link")
+if portal and portal[0] == identity.key:
+    st.link_button("Open Stripe billing portal ↗", portal[1], width="stretch")
 
 if access.pro:
-    st.caption("Pro has no daily application limits. Market-data availability and hosting capacity still apply.")
+    st.caption("Pro has no Buyntiq daily application limits. Market-data availability and hosting capacity still apply.")
 else:
     try:
         used = billing._store().usage(identity.key)
-        st.caption("Today's usage (resets at midnight UTC): " + "; ".join(f"{name}: {count}" for name, count in used.items()) if used else "No analyses used today.")
+        if used:
+            st.caption(
+                "Today's Free usage (resets at midnight UTC): "
+                + "; ".join(f"{name}: {count}" for name, count in used.items())
+            )
+        else:
+            st.caption("No Free analyses used today.")
     except Exception:
-        st.caption("Usage totals are temporarily unavailable.")
-    st.caption("Manual and hourly research refreshes count toward Free usage. Reopening saved results does not. Failed computations normally return the reserved run.")
+        st.caption("Free-usage totals are temporarily unavailable. This does not block Stripe checkout.")
 
 with st.expander("Account identifier"):
-    st.caption("This identifies your current login. The app owner can grant complimentary Pro through Streamlit Secrets.")
+    st.caption("Use this only for the private owner Pro allowlist in Streamlit Secrets.")
     st.code(identity.key, language=None)
