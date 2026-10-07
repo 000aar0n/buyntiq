@@ -339,9 +339,7 @@ def render_account_menu():
                 st.button("Retry sync", on_click=sync_session, kwargs={"force": True}, width="stretch")
             else:
                 st.caption("Your lists follow you across devices.")
-            from buyntiq import billing
-            st.caption("Buyntiq Pro" if billing.access().pro else "Buyntiq Free")
-            st.page_link("views/plans.py", label="Plans & subscription")
+            st.caption("Account sync is enabled. Payments are currently disabled.")
             st.button("Log out", on_click=_logout, width="stretch")
         else:
             st.write("Keep your watchlist and recent searches when you return.")
