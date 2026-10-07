@@ -4,7 +4,7 @@ import streamlit as st
 
 from buyntiq.state import initialize, change_mode
 from buyntiq.ui import ASSETS, styles
-from buyntiq import accounts, billing
+from buyntiq import accounts
 
 
 # =========================================================
@@ -30,7 +30,6 @@ initialize()
 
 # Restore/sync the signed-in user's account state before any page widgets render.
 accounts.sync_session()
-membership = billing.sync_access()
 
 # Existing Buyntiq black / monochrome UI.
 styles()
@@ -98,7 +97,6 @@ pages = [
         title="Portfolio review",
         url_path="review",
     ),
-    st.Page("views/plans.py", title="Plans", url_path="plans"),
 ]
 
 current = st.navigation(
@@ -149,7 +147,6 @@ with st.container(key="navigation"):
             st.page_link(
                 page,
                 label=page.title,
-                icon="🔒" if not membership.pro and page.title in {"Portfolio builder", "Portfolio review"} else None,
                 width="stretch",
             )
 
