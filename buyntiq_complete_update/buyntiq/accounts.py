@@ -274,9 +274,56 @@ def render_account_menu():
       border:1px solid #505050!important; color-scheme:dark;
     }
     [data-testid="stPopoverBody"] div:has(.st-key-account_panel) {background:transparent!important;}
-    .st-key-account_panel p, .st-key-account_panel [data-testid="stText"] {color:#ffffff!important;}
+    .st-key-account_panel {
+      min-width:320px;
+      padding:4px 2px 8px 2px;
+    }
+    .st-key-account_panel p,
+    .st-key-account_panel label,
+    .st-key-account_panel [data-testid="stText"] {
+      color:#ffffff!important;
+    }
     .st-key-account_panel [data-testid="stCaptionContainer"] p {color:#c8c8c8!important;}
-    .st-key-account_panel button {background:#000000!important; color:#ffffff!important; border-color:#606060!important;}
+
+    /* Readable email/code inputs in the dark account popup. */
+    .st-key-account_panel [data-testid="stTextInput"] input {
+      background:#161616!important;
+      color:#ffffff!important;
+      border:1px solid #606060!important;
+      caret-color:#ffffff!important;
+    }
+    .st-key-account_panel [data-testid="stTextInput"] input::placeholder {
+      color:#9f9f9f!important;
+      opacity:1!important;
+    }
+    .st-key-account_panel [data-testid="stTextInput"] > div {
+      background:transparent!important;
+    }
+
+    /* Give forms and actions breathing room instead of stacking tightly. */
+    .st-key-account_panel [data-testid="stForm"] {
+      border:0!important;
+      padding:12px 0 6px 0!important;
+      margin:8px 0 12px 0!important;
+    }
+    .st-key-account_panel [data-testid="stForm"] [data-testid="stVerticalBlock"] {
+      gap:0.7rem!important;
+    }
+    .st-key-account_panel [data-testid="stButton"],
+    .st-key-account_panel [data-testid="stPageLink"] {
+      margin-top:6px!important;
+    }
+
+    .st-key-account_panel button {
+      background:#000000!important;
+      color:#ffffff!important;
+      border:1px solid #606060!important;
+      min-height:42px!important;
+    }
+    .st-key-account_panel button p,
+    .st-key-account_panel [data-testid="stPageLink"] p {
+      color:#ffffff!important;
+    }
     .st-key-account_panel button:hover:not(:disabled) {background:#161616!important; border-color:#a0a0a0!important;}
     .st-key-account_panel button:disabled {background:#171717!important; color:#bdbdbd!important; opacity:1;}
     .st-key-account_panel button:disabled p {color:#bdbdbd!important;}
