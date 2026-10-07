@@ -12,6 +12,36 @@ ui.header(
 settings = billing.config()
 identity = accounts.current_identity()
 
+# Keep the Monthly / Annual segmented control readable in Buyntiq's dark UI.
+st.markdown(
+    """
+    <style>
+    .st-key-subscription_cycle button {
+        background: #141414 !important;
+        color: #f5f5f5 !important;
+        border-color: #4a4a4a !important;
+    }
+
+    .st-key-subscription_cycle button p,
+    .st-key-subscription_cycle button span {
+        color: inherit !important;
+    }
+
+    .st-key-subscription_cycle button[aria-pressed="true"] {
+        background: #ffffff !important;
+        color: #000000 !important;
+        border-color: #ffffff !important;
+        font-weight: 800 !important;
+    }
+
+    .st-key-subscription_cycle button:hover {
+        border-color: #bdbdbd !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if not settings:
     st.error("Billing is not configured yet. Check the [stripe] section in Streamlit Secrets.")
     st.stop()
