@@ -234,6 +234,11 @@ class BillingStore:
             payload = {"mode": "subscription", "customer": customer,
                        "client_reference_id": identity.key,
                        "line_items[0][price]": price_id, "line_items[0][quantity]": 1,
+                       # Buyntiq uses standard Stripe Checkout. Stripe accounts can
+                       # default new sessions to Managed Payments, which requires
+                       # additional product tax-code setup and rejects normal
+                       # Checkout configuration. Opt out explicitly per session.
+                       "managed_payments[enabled]": "false",
                        "subscription_data[metadata][buyntiq_owner]": identity.key,
                        "success_url": settings["site"] + "/plans?checkout=returned",
                        "cancel_url": settings["site"] + "/plans?checkout=canceled"}
