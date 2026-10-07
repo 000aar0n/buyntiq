@@ -90,12 +90,33 @@ def _stripe(method, path, data=None, *, idempotency=None):
                                     headers=headers, params=data if method == "GET" else None,
                                     data=data if method != "GET" else None,
                                     timeout=(5, 20), allow_redirects=False)
-        if response.status_code == 401:
-            raise BillingError("Stripe credentials need attention. The app owner should check the secret key in Streamlit settings.")
+        if response.status_code in {401, 403}:
+            raise BillingError(
+                "Stripe rejected the API key or its permissions. In Streamlit Secrets, use the "
+                "Stripe secret key for the same live/test account as your Price IDs."
+            )
         if response.status_code == 404 and path.startswith("prices/"):
             raise BillingError("This price was not found in the configured Stripe account. Check that both the key and price IDs come from the same sandbox or live account.")
         if not 200 <= response.status_code < 300:
-            raise BillingError("Billing is temporarily unavailable. Please retry or contact the app owner.")
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            error = payload.get("error") if isinstance(payload, dict) else {}
+            code = str(error.get("code", "")).strip() if isinstance(error, dict) else ""
+            message = str(error.get("message", "")).strip() if isinstance(error, dict) else ""
+            if code == "resource_missing":
+                raise BillingError(
+                    "Stripe could not find one of the configured billing objects. Make sure the "
+                    "secret key and both Price IDs are from the same Stripe account and mode."
+                )
+            if code in {"api_key_expired", "account_invalid"}:
+                raise BillingError("The configured Stripe account/key is no longer usable. Update the Stripe secret key in Streamlit Secrets.")
+            if path == "checkout/sessions" and message:
+                # Stripe's Checkout error messages are safe configuration/payment setup guidance;
+                # never include request headers or secret values.
+                raise BillingError("Stripe could not create checkout: " + message)
+            raise BillingError("Stripe returned an error while preparing billing. Please retry.")
         result = response.json()
         if not isinstance(result, dict):
             raise BillingError("Billing returned an invalid response.")
@@ -384,15 +405,33 @@ def start_checkout(cycle="monthly"):
     identity = _identity(force=True)
     if not identity:
         raise BillingError("Sign in with Account before subscribing.")
+    settings = config()
     price_details(cycle)  # Authoritative price, interval and test/live validation.
     try:
-        # Do not send someone to pay while their usage database is missing.
-        _store().usage(identity.key)
-        return _store().checkout(identity, config(), cycle)
+        # Checkout only needs the billing customer mapping. Free-tier usage counters
+        # must never block a customer from reaching Stripe.
+        return _store().checkout(identity, settings, cycle)
     except BillingError:
         raise
-    except Exception:
-        raise BillingError("Checkout could not be prepared. Please retry or contact the app owner.") from None
+    except Exception as exc:
+        detail = str(exc).lower()
+        if ("billing_customers" in detail and
+                ("does not exist" in detail or "undefinedtable" in detail or "relation" in detail)):
+            raise BillingError(
+                "The Buyntiq billing database is not initialized. Run billing_schema.sql in your "
+                "Supabase SQL Editor, then retry checkout."
+            ) from None
+        if "permission denied" in detail or "insufficient privilege" in detail:
+            raise BillingError(
+                "Buyntiq can reach the billing database but does not have permission to use it. "
+                "Check the Supabase database connection in [accounts]."
+            ) from None
+        if "timeout" in detail or "timed out" in detail:
+            raise BillingError("The billing database timed out. Please retry checkout.") from None
+        raise BillingError(
+            "Checkout reached Stripe setup but the billing account could not be prepared. "
+            "Check that billing_schema.sql has been run and that [accounts] database_url is working."
+        ) from None
 
 
 def start_portal():
