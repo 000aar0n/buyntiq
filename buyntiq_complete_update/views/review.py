@@ -74,7 +74,7 @@ with cols[3]:ui.metric("EST. ANNUAL VOLATILITY",ui.fmt((result["risk"] or {}).ge
 ui.forecast_summary(table, result["total"])
 ui.holdings_table(table)
 ui.data_notes(result["results"])
-st.caption("Research rating uses the same company, technical, and gated ML scores as Stock Research. It is separate from diversification and risk. This view does not calculate profit/loss because purchase prices are not provided.")
+st.caption("Research rating uses the same company, technical, and validated ML scores as Stock Research. It is separate from diversification and risk. This view does not calculate profit/loss because purchase prices are not provided.")
 left,right = st.columns(2)
 with left:
     ui.section("01","Position weights")
