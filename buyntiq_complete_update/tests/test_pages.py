@@ -90,3 +90,16 @@ def test_builder_workflow(app):
     assert not app.exception
     app.switch_page('views/review.py').run()
     assert not any(r.label == 'Projection allocation' for r in app.radio)
+
+
+def test_forecast_evidence_uses_validation_weight_not_method_name():
+    app = AppTest.from_string('''
+import pandas as pd
+from buyntiq import ui
+table = pd.DataFrame({'Ticker':['A','B'], 'Sector':['Technology']*2,
+    'Weight':[.5,.5], 'ML forecast':[.1,.2], 'ML score weight':[.1,0.],
+    'Forecast method':['Market context ML + baseline']*2})
+ui.forecast_summary(table, 1000)
+''').run()
+    assert not app.exception
+    assert any('1 of 2 holdings' in c.value for c in app.caption)

@@ -117,6 +117,7 @@ def errors_panel(errors):
 
 
 def forecast_summary(table, value, horizon=63, allocation_choice=False):
+    import pandas as pd
     from buyntiq.portfolio import projected_portfolio
     label = {21:"1-MONTH",63:"3-MONTH",126:"6-MONTH",252:"1-YEAR"}[horizon]
     whole = allocation_choice and value > 0 and "Shares" in table
@@ -132,11 +133,11 @@ def forecast_summary(table, value, horizon=63, allocation_choice=False):
     with cols[1]: metric("PROJECTED GAIN / LOSS", f"${result['gain']:+,.2f}", "Before fees and taxes")
     with cols[2]: metric("PROJECTED END VALUE", f"${result['end_value']:,.2f}", "Includes uninvested cash" if whole else "Displayed holdings / target allocation")
     st.caption("Estimates are uncertain, not guaranteed returns. Cash assumes 0% return. Forecast method identifies limited-history ML and statistical fallbacks; these receive no ML rating weight.")
-    weak = table.get("Forecast method")
-    if weak is not None:
-        count = int(weak.ne("Validated ensemble").sum())
+    evidence = table.get("ML score weight")
+    if evidence is not None:
+        count = int(pd.to_numeric(evidence, errors="coerce").fillna(0).le(0).sum())
         if count:
-            st.caption(f"Forecast evidence: {count} of {len(table)} holdings have weak or unvalidated estimates. Selecting positive forecasts does not establish that those stocks will rise.")
+            st.caption(f"Forecast evidence: {count} of {len(table)} holdings have estimates that did not earn ML rating weight in validation. Selecting positive forecasts does not establish that those stocks will rise.")
     unknown = table.loc[table.Sector.eq("Unknown"), "Ticker"].tolist()
     if unknown:
         st.warning("Sector data remains unavailable for: " + ", ".join(unknown) + ". These are not treated as a shared sector during diversification.")

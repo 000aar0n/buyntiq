@@ -1,4 +1,7 @@
-"""Run from this folder with: python -m streamlit run app.py"""
+"""Live stock research and cash-aware portfolio projections.
+
+Run from this folder with: python -m streamlit run app.py
+"""
 
 import streamlit as st
 
