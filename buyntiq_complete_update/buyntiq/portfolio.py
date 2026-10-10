@@ -445,13 +445,19 @@ def positive_forecast(result):
 def projected_portfolio(table, value, whole_shares=False):
     """Sum dollar gains; never treat missing forecasts as zero return."""
     forecasts = pd.to_numeric(table["ML forecast"], errors="coerce")
-    amounts = table["Shares"] * table.Price if whole_shares else table.Weight * value
+    # Percentage-only research still has a meaningful weighted return when
+    # the user leaves the dollar budget at zero.
+    percentage_only = not whole_shares and value == 0
+    amounts = table["Shares"] * table.Price if whole_shares else table.Weight * (1. if percentage_only else value)
     active = amounts > 0
     valid = np.isfinite(forecasts)
     coverage = float(amounts[active & valid].sum()/amounts[active].sum()) if active.any() else 1.
     if (active & ~valid).any():
         return {"available": False, "coverage": coverage}
     gain = float((amounts[active] * forecasts[active]).sum())
+    if percentage_only:
+        return {"available": True, "coverage": coverage, "gain": 0.,
+                "return": gain, "end_value": 0., "cash": 0.}
     return {"available": True, "coverage": coverage, "gain": gain,
             "return": gain/value if value > 0 else 0., "end_value": value+gain,
             "cash": max(0., float(value-amounts.sum()))}

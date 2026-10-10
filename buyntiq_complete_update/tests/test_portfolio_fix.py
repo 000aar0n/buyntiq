@@ -56,8 +56,12 @@ def test_positive_filter_and_cash_projection():
     assert whole['cash'] == 300
     assert whole['end_value'] == 1110
     assert projected_portfolio(t,1000)['return'] == pytest.approx(.15)
+    percent = projected_portfolio(t, 0)
+    assert percent['return'] == pytest.approx(.15)
+    assert percent['gain'] == percent['end_value'] == 0
     t.loc[0,'ML forecast'] = float('nan')
     assert not projected_portfolio(t,1000)['available']
+    assert not projected_portfolio(t,0)['available']
 
 
 def test_builder_excludes_negative_forecast_even_with_high_score(monkeypatch):

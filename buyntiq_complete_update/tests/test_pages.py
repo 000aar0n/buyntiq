@@ -84,3 +84,9 @@ def test_builder_workflow(app):
     assert (result["table"]["ML forecast"] > 0).all()
     assert result["requested"]==5
     assert app.warning
+    projection = next(r for r in app.radio if r.label == 'Projection allocation')
+    assert projection.value == 'Whole shares + cash'
+    projection.set_value('Fractional target weights').run()
+    assert not app.exception
+    app.switch_page('views/review.py').run()
+    assert not any(r.label == 'Projection allocation' for r in app.radio)

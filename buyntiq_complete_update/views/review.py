@@ -51,7 +51,9 @@ if st.button("Review my portfolio",type="primary",width="stretch"):
             result = review(holdings,demo=st.session_state.demo_mode,progress=lambda fraction,message:bar.progress(fraction,text=message))
             result["input_holdings"] = holdings
             st.session_state.review_result = result
+            st.session_state.pop("review_failure", None)
     except Exception as exc:
+        st.session_state.review_failure = True
         st.error(str(exc))
     finally:
         bar.empty()
@@ -61,6 +63,8 @@ if not result:
     st.markdown('<div class="empty-state"><h3>Your holdings, in perspective.</h3>Enter tickers and share counts above to begin.<br>Nothing is connected to a brokerage or used to place trades.</div>',unsafe_allow_html=True)
     st.stop()
 table = result["table"]
+if st.session_state.get("review_failure"):
+    st.warning("The latest review failed. The results below are from the previous successful review.")
 partial = bool(result["errors"])
 ui.section("REVIEW","Your portfolio at a glance","Priced holdings only" if partial else "Current session")
 st.caption("Review saved " + result["created_at"][:16].replace("T"," ") + " UTC. Run the review again to apply changes to the table.")

@@ -116,10 +116,10 @@ def errors_panel(errors):
                 st.write(f"**{symbol}** — {message}")
 
 
-def forecast_summary(table, value, horizon=63):
+def forecast_summary(table, value, horizon=63, allocation_choice=False):
     from buyntiq.portfolio import projected_portfolio
     label = {21:"1-MONTH",63:"3-MONTH",126:"6-MONTH",252:"1-YEAR"}[horizon]
-    whole = "Whole shares" in table
+    whole = allocation_choice and value > 0 and "Shares" in table
     if whole:
         basis = st.radio("Projection allocation", ["Whole shares + cash", "Fractional target weights"], horizontal=True, key="projection_basis")
         whole = basis == "Whole shares + cash"

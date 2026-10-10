@@ -89,7 +89,7 @@ with cols[3]:ui.metric("UNALLOCATED CASH",ui.fmt(result["cash"],"money"),"After 
 
 st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
 
-ui.forecast_summary(table, result["budget"], result.get("horizon",63))
+ui.forecast_summary(table, result["budget"], result.get("horizon",63), allocation_choice=True)
 
 st.markdown('<div class="builder-vspace"></div>', unsafe_allow_html=True)
 
