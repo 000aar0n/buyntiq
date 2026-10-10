@@ -164,6 +164,7 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
     analyzed_symbols = set()
     next_index = 0
     attempted = 0
+    completed_checks = 0
     eligible = []
 
     def ensure_frames(batch_symbols):
@@ -184,7 +185,7 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
                     errors[symbol] = "Price history unavailable during finalist refill"
 
     def analyze_batch(batch_symbols):
-        nonlocal attempted
+        nonlocal attempted, completed_checks
         batch_symbols = [
             symbol for symbol in batch_symbols
             if symbol not in analyzed_symbols
@@ -222,10 +223,11 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
                 except Exception as exc:
                     errors[symbol] = str(exc)
 
+                completed_checks += 1
                 if progress:
                     if next_index <= initial_analysis_target:
                         fraction = .30 + .60 * min(
-                            len(analyzed_symbols) / max(initial_analysis_target, 1),
+                            completed_checks / max(initial_analysis_target, 1),
                             1.0,
                         )
                     else:
@@ -236,7 +238,7 @@ def build(symbols, count=5, budget=10000, profile="Balanced", method="Highest sc
                     )
                     progress(
                         fraction,
-                        f"Company + ML analysis · {len(analyzed_symbols)} analyzed · {current_eligible}/{count} eligible",
+                        f"Company + ML analysis · {completed_checks}/{len(analyzed_symbols)} checks finished · {current_eligible} eligible (need {count})",
                     )
 
     # Stage 2: analyze an over-sampled initial pool, then automatically refill
